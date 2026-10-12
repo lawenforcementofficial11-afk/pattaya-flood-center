@@ -1,0 +1,19 @@
+{
+  "name": "pattaya-flood-center",
+  "version": "1.0.0",
+  "description": "ศูนย์ช่วยเหลือน้ำท่วมเมืองพัทยา",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "screenshot": "node scripts/screenshot.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.22.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
