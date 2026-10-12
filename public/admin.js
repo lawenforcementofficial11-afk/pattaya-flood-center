@@ -5,7 +5,7 @@ const api = async (u, o = {}) => { const r = await fetch(u, { headers: { 'conten
 const fmt = (iso) => iso ? new Date(iso).toLocaleString('th-TH', { day: 'numeric', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' }) : '-';
 const toast = (m, ok = true) => { const d = document.createElement('div'); d.textContent = m; d.style.cssText = `position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:${ok ? '#166534' : '#b91c1c'};color:#fff;padding:10px 16px;border-radius:10px;z-index:3000`; document.body.appendChild(d); setTimeout(() => d.remove(), 2500); };
 let SC = null; const RANK = { staff: 1, admin: 2, superadmin: 3 }; const can = (r) => SC && RANK[SC.me.role] >= RANK[r];
-const ACT = { login: 'เข้าสู่ระบบ', update: 'แก้ไข', delete: 'ลบ', create: 'สร้าง', contacts: 'แก้เบอร์ติดต่อ', texts: 'แก้ข้อความ', 'text-reset': 'คืนค่าข้อความ', settings: 'ตั้งค่าเว็บ', password: 'เปลี่ยนรหัสผ่าน', export: 'ส่งออก CSV', 'bulk-status': 'เปลี่ยนสถานะหลายรายการ' };
+const ACT = { login: 'เข้าสู่ระบบ', update: 'แก้ไข', delete: 'ลบ', create: 'สร้าง', contacts: 'แก้เบอร์ติดต่อ', texts: 'แก้ข้อความ', 'text-reset': 'คืนค่าข้อความ', antispam: 'ตั้งค่ากันสแปม', settings: 'ตั้งค่าเว็บ', password: 'เปลี่ยนรหัสผ่าน', export: 'ส่งออก CSV', 'bulk-status': 'เปลี่ยนสถานะหลายรายการ' };
 
 function showLogin() {
   $('#nav').innerHTML = ''; $('#who').textContent = '';
@@ -20,14 +20,14 @@ async function boot() {
 }
 function nav(cur) {
   const items = [['dash', '📊 ภาพรวม'], ...Object.entries(SC.colls).filter(([k, c]) => c.triage || can('admin')).map(([k, c]) => ['c/' + k, c.label.split(' (')[0]]),
-    ...(can('admin') ? [['ptycctv', '📹 กล้องเมืองพัทยา'], ['texts', '📝 ข้อความทั้งเว็บ'], ['settings', '🎨 ตั้งค่าเว็บ'], ['audit', '🧾 ประวัติการแก้ไข']] : []), ...(can('superadmin') ? [['users', '👥 ผู้ใช้']] : []), ['me', '🔑 รหัสผ่านของฉัน'], ['logout', '🚪 ออก']];
+    ...(can('admin') ? [['ptycctv', '📹 กล้องเมืองพัทยา'], ['texts', '📝 ข้อความทั้งเว็บ'], ['settings', '🎨 ตั้งค่าเว็บ'], ['antispam', '🛡️ กันสแปม'], ['audit', '🧾 ประวัติการแก้ไข']] : []), ...(can('superadmin') ? [['users', '👥 ผู้ใช้']] : []), ['me', '🔑 รหัสผ่านของฉัน'], ['logout', '🚪 ออก']];
   $('#nav').innerHTML = items.map(([h, l]) => `<a href="#${h}" class="${h === cur ? 'on' : ''}">${esc(l)}</a>`).join('');
   $('#nav .on')?.scrollIntoView({ inline: 'center', block: 'nearest' });
 }
 async function route() {
   document.querySelectorAll('.modal').forEach((m) => m.remove()); const h = location.hash.slice(1) || 'dash'; nav(h); window.scrollTo(0, 0); app.innerHTML = '<p class="muted">กำลังโหลด…</p>';
   try { if (h === 'logout') { await api('/api/staff/logout', { method: 'POST' }); location.hash = ''; return showLogin(); }
-    if (h.startsWith('c/')) return await collPage(h.slice(2)); await ({ dash, texts, settings, users, audit, me, ptycctv }[h] || dash)(); } catch (e) { app.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+    if (h.startsWith('c/')) return await collPage(h.slice(2)); await ({ dash, texts, settings, antispam, users, audit, me, ptycctv }[h] || dash)(); } catch (e) { app.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
 }
 const stName = (s) => SC.statusNames[s] || s;
 
@@ -88,23 +88,44 @@ function edit(k, x, done) {
   $('#dl', m) && ($('#dl', m).onclick = async () => { if (!confirm('ลบรายการนี้ถาวร?')) return; await api(`/api/admin/c/${k}/${encodeURIComponent(x.id)}`, { method: 'DELETE' }); toast('ลบแล้ว'); close(); done(); });
 }
 
-// ---------- texts (CMS) ----------
+// ---------- texts (CMS, per language) ----------
+const LN = { th: 'ไทย (TH)', en: 'English (EN)', zh: '中文 (ZH)' }; let TLANG = 'th';
 async function texts() {
   let L = await api('/api/admin/texts'); const groups = [...new Set(L.map((t) => t.group))];
-  app.innerHTML = `<div class="card"><h2>📝 ข้อความทั้งเว็บ</h2><p class="muted">ทุกข้อความที่ประชาชนเห็น (หัวข้อ ปุ่ม ป้ายช่องกรอก คำเตือน ความเป็นส่วนตัว ส่วนท้าย ชื่อสถานะ ระดับน้ำ ชื่อหน้า/meta) แก้แล้วกด "บันทึกทั้งหมด" — มีผลทันทีกับผู้ใช้ทุกคน ช่องว่าง = ใช้ค่าเริ่มต้น</p>
+  const V = (t) => (TLANG === 'th' ? { def: t.default, val: t.value } : { def: t.i18n[TLANG].default || t.default, val: t.i18n[TLANG].value });
+  app.innerHTML = `<div class="card"><h2>📝 ข้อความทั้งเว็บ</h2><p class="muted">ทุกข้อความที่ประชาชนเห็น แยกตามภาษา (ไทยเป็นภาษาหลัก) — เลือกภาษาที่จะแก้ แก้แล้วกด "บันทึกทั้งหมด" มีผลทันที ช่องว่าง = ใช้ค่าเริ่มต้นของภาษานั้น</p>
+   <div class="bar" id="lt">${Object.entries(LN).map(([l, n]) => `<button class="btn sm ${l === TLANG ? '' : 'alt'}" data-l="${l}">${n}</button>`).join('')}</div>
    <div class="bar"><input id="q" placeholder="ค้นหาข้อความหรือรหัส"><select id="g"><option value="">ทุกหน้า/ส่วน (${groups.length})</option>${groups.map((g) => `<option>${esc(g)}</option>`).join('')}</select><label style="font-weight:400"><input type="checkbox" id="oc" style="width:auto"> เฉพาะที่แก้แล้ว</label></div>
-   <div class="bar"><button class="btn" id="saveall">💾 บันทึกทั้งหมด</button><span id="dirty" class="muted"></span><a class="btn alt sm" href="/" target="pfcprev">เปิดหน้าเว็บ (ดูตัวอย่าง)</a></div><div id="list"></div></div>`;
+   <div class="bar"><button class="btn" id="saveall">💾 บันทึกทั้งหมด (${esc(LN[TLANG])})</button><span id="dirty" class="muted"></span><a class="btn alt sm" href="/?lang=${TLANG}" target="pfcprev">เปิดหน้าเว็บ (ดูตัวอย่าง)</a></div><div id="list"></div></div>`;
   const dirty = {};
+  $('#lt').onclick = (e) => { const l = e.target.dataset.l; if (!l || l === TLANG) return; if (Object.keys(dirty).length && !confirm('มีการแก้ไขที่ยังไม่บันทึก ทิ้งไป?')) return; TLANG = l; texts(); };
   const draw = () => { const q = $('#q').value.trim().toLowerCase(), g = $('#g').value, oc = $('#oc').checked; let last = '';
-    const F = L.filter((t) => (!g || t.group === g) && (!oc || t.value != null || t.key in dirty) && (!q || (t.key + ' ' + t.default + ' ' + (t.value || '')).toLowerCase().includes(q)));
-    $('#list').innerHTML = F.slice(0, 400).map((t) => { const v = t.key in dirty ? dirty[t.key] : t.value ?? ''; const head = t.group !== last ? `<h3 style="margin-top:16px">${esc((last = t.group))}</h3>` : '';
-      return head + `<div class="kv ${t.value != null || t.key in dirty ? 'changed' : ''}" data-k="${esc(t.key)}"><code>${esc(t.key)}</code> ${t.value != null ? '<span class="pill">แก้แล้ว</span>' : ''}<div class="def">ค่าเริ่มต้น: ${esc(t.default)}</div>
-        <textarea rows="1" placeholder="${esc(t.default)}">${esc(v)}</textarea><div class="prev">${esc(v || t.default)}</div>${t.value != null ? '<button class="btn sm alt rs">↺ คืนค่าเริ่มต้น</button>' : ''}</div>`; }).join('') + (F.length > 400 ? `<p class="muted">แสดง 400 จาก ${F.length} — ค้นหาเพื่อกรอง</p>` : '') || '<p class="muted">ไม่พบ</p>';
+    const F = L.filter((t) => { const x = V(t); return (!g || t.group === g) && (!oc || x.val != null || t.key in dirty) && (!q || (t.key + ' ' + t.default + ' ' + x.def + ' ' + (x.val || '')).toLowerCase().includes(q)); });
+    $('#list').innerHTML = F.slice(0, 400).map((t) => { const x = V(t); const v = t.key in dirty ? dirty[t.key] : x.val ?? ''; const head = t.group !== last ? `<h3 style="margin-top:16px">${esc((last = t.group))}</h3>` : '';
+      return head + `<div class="kv ${x.val != null || t.key in dirty ? 'changed' : ''}" data-k="${esc(t.key)}"><code>${esc(t.key)}</code> ${x.val != null ? '<span class="pill">แก้แล้ว</span>' : ''}<div class="def">ค่าเริ่มต้น (${TLANG.toUpperCase()}): ${esc(x.def)}${TLANG !== 'th' ? `<br><span class="muted">ไทย: ${esc(t.value ?? t.default)}</span>` : ''}</div>
+        <textarea rows="1" placeholder="${esc(x.def)}">${esc(v)}</textarea><div class="prev">${esc(v || x.def)}</div>${x.val != null ? '<button class="btn sm alt rs">↺ คืนค่าเริ่มต้น (' + TLANG.toUpperCase() + ')</button>' : ''}</div>`; }).join('') + (F.length > 400 ? `<p class="muted">แสดง 400 จาก ${F.length} — ค้นหาเพื่อกรอง</p>` : '') || '<p class="muted">ไม่พบ</p>';
     $('#dirty').textContent = Object.keys(dirty).length ? `มีการแก้ไขที่ยังไม่บันทึก ${Object.keys(dirty).length} รายการ` : ''; };
-  $('#list').oninput = (e) => { const kv = e.target.closest('.kv'); if (!kv) return; dirty[kv.dataset.k] = e.target.value; const t = L.find((x) => x.key === kv.dataset.k); $('.prev', kv).textContent = e.target.value || t.default; kv.classList.add('changed'); $('#dirty').textContent = `มีการแก้ไขที่ยังไม่บันทึก ${Object.keys(dirty).length} รายการ`; };
-  $('#list').onclick = async (e) => { if (!e.target.classList.contains('rs')) return; const k = e.target.closest('.kv').dataset.k; await api('/api/admin/texts/' + encodeURIComponent(k), { method: 'DELETE' }); delete dirty[k]; L = await api('/api/admin/texts'); toast('คืนค่าเริ่มต้นแล้ว'); draw(); };
-  $('#saveall').onclick = async () => { if (!Object.keys(dirty).length) return toast('ไม่มีการแก้ไข', false); const r = await api('/api/admin/texts', { method: 'PUT', body: { values: dirty } }); for (const k in dirty) delete dirty[k]; L = await api('/api/admin/texts'); toast(`บันทึก ${r.n} ข้อความ`); draw(); };
+  $('#list').oninput = (e) => { const kv = e.target.closest('.kv'); if (!kv) return; dirty[kv.dataset.k] = e.target.value; const t = L.find((x) => x.key === kv.dataset.k); $('.prev', kv).textContent = e.target.value || V(t).def; kv.classList.add('changed'); $('#dirty').textContent = `มีการแก้ไขที่ยังไม่บันทึก ${Object.keys(dirty).length} รายการ`; };
+  $('#list').onclick = async (e) => { if (!e.target.classList.contains('rs')) return; const k = e.target.closest('.kv').dataset.k; await api('/api/admin/texts/' + encodeURIComponent(k) + '?lang=' + TLANG, { method: 'DELETE' }); delete dirty[k]; L = await api('/api/admin/texts'); toast('คืนค่าเริ่มต้นแล้ว'); draw(); };
+  $('#saveall').onclick = async () => { if (!Object.keys(dirty).length) return toast('ไม่มีการแก้ไข', false); const r = await api('/api/admin/texts', { method: 'PUT', body: { values: dirty, lang: TLANG } }); for (const k in dirty) delete dirty[k]; L = await api('/api/admin/texts'); toast(`บันทึก ${r.n} ข้อความ`); draw(); };
   ['q', 'g', 'oc'].forEach((id) => ($('#' + id).oninput = draw)); draw();
+}
+
+// ---------- anti-spam ----------
+const ASN = { reports: 'รายงานระดับน้ำ', requests: 'คำขอช่วยเหลือ', missing: 'ตามหาคน', lostfound: 'ของหาย–ได้คืน' };
+async function antispam() {
+  const { antispam: A, stats, turnstile, yourIp } = await api('/api/admin/antispam');
+  const chk = (id, v, l) => `<label style="font-weight:400;display:block;margin:6px 0"><input type="checkbox" id="${id}" style="width:auto" ${v ? 'checked' : ''}> ${l}</label>`;
+  app.innerHTML = `<div class="grid two"><div class="card"><h2>🛡️ กันสแปม</h2>${chk('on', A.on, 'เปิดระบบกันสแปม (จำกัดความถี่ / honeypot / เวลากรอกขั้นต่ำ / รวมรายการซ้ำ)')}${chk('honeypot', A.honeypot, 'ช่องดักบอท (honeypot)')}${chk('dedupe', A.dedupe, 'รวมรายการซ้ำ (จุด+ประเภทเดียวกัน) เป็น "ยืนยันโดย N คน"')}
+    <label>เวลากรอกขั้นต่ำ (วินาที)</label><input id="minFillSec" type="number" value="${A.minFillSec}"><label>ช่วงเวลารวมรายการซ้ำ (นาที)</label><input id="dedupeMin" type="number" value="${A.dedupeMin}"><label>รัศมีถือว่าเป็นจุดเดียวกัน (เมตร)</label><input id="dedupeMeters" type="number" value="${A.dedupeMeters}"><label>ขนาดรูปสูงสุด (MB, ≤3, JPG/PNG/WEBP)</label><input id="maxPhotoMB" type="number" step="0.1" value="${A.maxPhotoMB}">
+    <p class="muted">Cloudflare Turnstile: ${turnstile ? '✅ เปิดใช้ (ตั้ง TURNSTILE_SITE_KEY/TURNSTILE_SECRET แล้ว)' : 'ปิด — ตั้งค่า env TURNSTILE_SITE_KEY และ TURNSTILE_SECRET เพื่อเปิด'}</p>
+    <p class="muted">สถิติตั้งแต่เริ่มเซิร์ฟเวอร์: honeypot ${stats.honeypot} · ส่งเร็วเกิน ${stats.tooFast} · เกินจำนวน ${stats.rate} · IP ถูกบล็อก ${stats.blocked} · captcha ไม่ผ่าน ${stats.captcha} · รวมซ้ำ ${stats.merged}</p></div>
+   <div class="card"><h2>⏱️ จำกัดจำนวนการส่ง (ต่อ IP และต่ออุปกรณ์)</h2>${Object.keys(A.limits).map((k) => `<label>${esc(ASN[k] || k)}</label><div class="bar"><input id="n_${k}" type="number" value="${A.limits[k].n}" style="width:90px"> ครั้ง ต่อ <input id="m_${k}" type="number" value="${A.limits[k].min}" style="width:90px"> นาที</div>`).join('')}<p class="muted">0 = ไม่จำกัด</p>
+    <h2>⛔ IP ที่บล็อก</h2><p class="muted">บรรทัดละ 1 IP · ลงท้าย * = ขึ้นต้นด้วย (เช่น 203.0.113.*) · IP ของคุณ: <code>${esc(yourIp)}</code></p><textarea id="blocked" rows="6">${esc((A.blocked || []).join('\n'))}</textarea></div></div>
+   <p><button class="btn" id="sv">💾 บันทึก</button> <button class="btn alt" id="rs">คืนค่าเริ่มต้น</button></p>`;
+  $('#sv').onclick = async () => { const limits = {}; for (const k of Object.keys(A.limits)) limits[k] = { n: $('#n_' + k).value, min: $('#m_' + k).value };
+    await api('/api/admin/antispam', { method: 'PUT', body: { on: $('#on').checked, honeypot: $('#honeypot').checked, dedupe: $('#dedupe').checked, minFillSec: $('#minFillSec').value, dedupeMin: $('#dedupeMin').value, dedupeMeters: $('#dedupeMeters').value, maxPhotoMB: $('#maxPhotoMB').value, limits, blocked: $('#blocked').value.split(/\s+/) } }); toast('บันทึกแล้ว'); antispam(); };
+  $('#rs').onclick = async () => { if (!confirm('คืนค่าเริ่มต้นการกันสแปม (รวมล้างรายการ IP ที่บล็อก)?')) return; await api('/api/admin/antispam', { method: 'PUT', body: { reset: true } }); antispam(); };
 }
 
 // ---------- settings ----------

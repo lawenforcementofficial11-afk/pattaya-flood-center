@@ -21,3 +21,5 @@ input,select,textarea{width:100%;font:inherit;padding:9px;border:1px solid #cbd5
 .banner{padding:10px 14px;text-align:center;font-weight:600;white-space:pre-line}.banner.info{background:#e0f2fe;color:#075985}.banner.warn{background:#fef3c7;color:#92400e}.banner.danger{background:#dc2626;color:#fff}
 .ebar{background:#7f1d1d;color:#fff;text-align:center;padding:6px 10px;font-size:14px}.ebar a{color:#fff;font-weight:700;margin:0 5px}
 .cam{width:100%;max-height:360px;border:0;border-radius:10px;background:#000;margin-top:6px;display:block}iframe.cam{height:300px}
+
+.langsw{display:flex;gap:2px;margin-left:auto;margin-right:10px}.langsw button{background:transparent;color:#e0f2fe;border:1px solid rgba(255,255,255,.35);padding:3px 7px;font-size:12px;border-radius:6px;cursor:pointer}.langsw button.on{background:#fff;color:var(--header,#0c4a6e);font-weight:700}.hp{position:absolute!important;left:-9999px;width:1px;height:1px;overflow:hidden}

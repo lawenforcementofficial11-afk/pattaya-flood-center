@@ -10,6 +10,20 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const CENTER = { lat: 12.9236, lng: 100.8825 };
 const store = require('./store')(DATA_DIR);
 const TEXTS = require('./texts').build();
+const { AsyncLocalStorage } = require('async_hooks');
+const LANGS = ['th', 'en', 'zh'];
+const TR = { en: require('./i18n/en.json'), zh: require('./i18n/zh.json') };
+const als = new AsyncLocalStorage();
+const L = () => als.getStore()?.lang || 'th';
+function pickLang(req) {
+  const q = String(req.query?.lang || req.headers['x-lang'] || '').toLowerCase().slice(0, 2); if (LANGS.includes(q)) return q;
+  const c = (req.headers.cookie || '').match(/pfc_lang=(th|en|zh)/); if (c) return c[1];
+  return 'th';
+}
+const DEMO_SEED = process.env.DEMO_SEED === '1';
+const TURNSTILE = process.env.TURNSTILE_SITE_KEY && process.env.TURNSTILE_SECRET ? { site: process.env.TURNSTILE_SITE_KEY, secret: process.env.TURNSTILE_SECRET } : null;
+const AS_DEFAULT = { on: true, honeypot: true, minFillSec: 3, dedupe: true, dedupeMin: 10, dedupeMeters: 150, maxPhotoMB: 3,
+  limits: { reports: { n: 5, min: 10 }, requests: { n: 3, min: 10 }, missing: { n: 3, min: 10 }, lostfound: { n: 5, min: 10 } }, blocked: [] };
 
 // ---------- storage ----------
 let db;
@@ -24,7 +38,15 @@ async function init() {
   const seed = require('./seed-contacts');
   db.contacts ||= JSON.parse(JSON.stringify(seed));
   for (const k of ['reports', 'requests', 'missing', 'lostfound', 'audit', 'roads', 'users']) db[k] ||= [];
-  db.seq ||= 1000; db.texts ||= {};
+  db.seq ||= 1000; db.texts ||= {}; db.i18n ||= {}; for (const l of ['en', 'zh']) db.i18n[l] ||= {};
+  db.antispam = { ...JSON.parse(JSON.stringify(AS_DEFAULT)), ...(db.antispam || {}) }; db.antispam.limits = { ...AS_DEFAULT.limits, ...db.antispam.limits };
+  // remove seeded demo / test data unless DEMO_SEED=1
+  if (!DEMO_SEED) { const isDemo = (x) => /ทดสอบ|ข้อมูลตัวอย่าง/.test(JSON.stringify(x)); let n = 0;
+    for (const k of ['reports', 'requests', 'missing', 'lostfound', 'roads']) { const before = db[k].length; db[k] = db[k].filter((x) => !isDemo(x)); n += before - db[k].length; }
+    if (n) console.log(`removed ${n} demo/test records (set DEMO_SEED=1 to keep/seed demo data)`); }
+  else if (!db.reports.length) { const now = new Date().toISOString();
+    db.reports.push({ id: newId('R'), areaId: 'central', areaName: 'พัทยากลาง', level: 'knee', lat: 12.9355, lng: 100.889, note: 'ข้อมูลตัวอย่าง', photo: null, status: 'new', confirms: 1, createdAt: now });
+    db.roads.push({ id: newId('W'), type: 'closed', title: 'ข้อมูลตัวอย่าง: ถนนปิด', note: '', points: [[12.94, 100.887], [12.93, 100.886]], status: 'open', by: 'demo', createdAt: now }); console.log('DEMO_SEED=1: seeded demo data'); }
   db.settings = { ...JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), ...(db.settings || {}) };
   const ids = db.settings.sections.map((s) => s.id); for (const s of DEFAULT_SETTINGS.sections) if (!ids.includes(s.id)) db.settings.sections.push({ ...s });
   db.cctvOverrides ||= {};
@@ -42,7 +64,9 @@ const newId = (p) => p + '-' + (++db.seq);
 for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, async () => { await flush(); process.exit(0); });
 
 // ---------- texts ----------
-const S = (k, d) => (db.texts[k] != null && db.texts[k] !== '' ? db.texts[k] : d);
+const S = (k, d) => { const th = db.texts[k] != null && db.texts[k] !== '' ? db.texts[k] : d; const l = L(); if (l === 'th') return th; return db.i18n[l]?.[k] ?? TR[l][k] ?? th; };
+// effective text map for a language (sent to the public client)
+const textsFor = (l) => (l === 'th' ? db.texts : { ...TR[l], ...db.i18n[l] });
 const LEVELS = () => ({ dry: S('level.dry', 'แห้ง / ต่ำกว่าข้อเท้า <10 ซม.'), ankle: S('level.ankle', 'ข้อเท้า–เข่า 10–50 ซม.'), knee: S('level.knee', 'เข่า–เอว 50–100 ซม.'), waist: S('level.waist', 'เอว–อก 100–130 ซม.'), chest: S('level.chest', 'อกขึ้นไป 130–180 ซม.'), roof: S('level.roof', 'มิดหัว / ท่วมหลังคา >180 ซม.') });
 const KINDS = () => ({ food: S('kind.food', 'ขออาหาร / ถุงยังชีพ'), evacuate: S('kind.evacuate', 'ติดอยู่ ต้องการอพยพ'), medical: S('kind.medical', 'ผู้ป่วย / ต้องการยา'), other: S('kind.other', 'อื่น ๆ') });
 const STATUS_TEXT = () => ({ new: S('st.new', 'รับเรื่องแล้ว รอเจ้าหน้าที่'), triaged: S('st.triaged', 'คัดกรองแล้ว จัดลำดับความเร่งด่วน'), assigned: S('st.assigned', 'ส่งต่อทีมในพื้นที่แล้ว'), enroute: S('st.enroute', 'ทีมกำลังเดินทาง'), resolved: S('st.resolved', 'ช่วยเหลือเรียบร้อย'), closed: S('st.closed', 'ปิดเคส'), verified: S('st.verified', 'ยืนยันแล้ว'), hidden: S('st.hidden', 'ซ่อน'), searching: S('st.searching', 'กำลังตามหา'), found: S('st.found', 'พบตัวแล้ว'), open: S('st.open', 'ประกาศอยู่ / เปิด') });
@@ -81,16 +105,19 @@ const clean = (s, n = 500) => String(s ?? '').replace(/[<>]/g, '').trim().slice(
 const num = (x) => { const n = Number(x); return x !== '' && x != null && Number.isFinite(n) ? n : null; };
 async function savePhoto(dataUrl) {
   if (!dataUrl) return null;
-  const m = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
-  if (!m) return null; const buf = Buffer.from(m[2], 'base64'); if (buf.length > 3e6) return null;
+  const bad = () => Object.assign(new Error(S('err.photo', 'รูปภาพต้องเป็น JPG/PNG/WEBP และขนาดไม่เกินที่กำหนด')), { status: 400 });
+  const m = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl));
+  if (!m) throw bad(); const buf = Buffer.from(m[2], 'base64'); if (buf.length > (db.antispam.maxPhotoMB || 3) * 1048576) throw bad();
+  const magic = { jpeg: (b) => b[0] === 0xff && b[1] === 0xd8, png: (b) => b.slice(0, 4).toString('hex') === '89504e47', webp: (b) => b.slice(0, 4).toString() === 'RIFF' && b.slice(8, 12).toString() === 'WEBP' };
+  if (!magic[m[1]](buf)) throw bad();
   const f = crypto.randomBytes(8).toString('hex') + '.' + (m[1] === 'jpeg' ? 'jpg' : m[1]);
   await store.putPhoto(f, 'image/' + m[1], buf); return '/uploads/' + f;
 }
 function inPattaya(lat, lng) { return lat > 12.6 && lat < 13.3 && lng > 100.6 && lng < 101.3; }
 const area = (id) => db.contacts.areas.find((a) => a.id === id);
 const last4 = (p) => String(p || '').replace(/\D/g, '').slice(-4);
-const publicReport = (r) => ({ id: r.id, areaId: r.areaId, areaName: r.areaName, level: r.level, levelText: LEVELS()[r.level], cm: LEVEL_CM[r.level], lat: r.lat, lng: r.lng, note: r.note, photo: r.photo, createdAt: r.createdAt, status: r.status });
-const publicRequest = (r) => ({ id: r.id, kind: r.kind, areaName: r.areaName, lat: r.lat ? +r.lat.toFixed(3) : null, lng: r.lng ? +r.lng.toFixed(3) : null, needs: r.needs, status: r.status, statusText: r.statusText, createdAt: r.createdAt });
+const publicReport = (r) => ({ confirms: r.confirms || 1, id: r.id, areaId: r.areaId, areaName: r.areaName, level: r.level, levelText: LEVELS()[r.level], cm: LEVEL_CM[r.level], lat: r.lat, lng: r.lng, note: r.note, photo: r.photo, createdAt: r.createdAt, status: r.status });
+const publicRequest = (r) => ({ confirms: r.confirms || 1, id: r.id, kind: r.kind, areaName: r.areaName, lat: r.lat ? +r.lat.toFixed(3) : null, lng: r.lng ? +r.lng.toFixed(3) : null, needs: r.needs, status: r.status, statusText: r.statusText, createdAt: r.createdAt });
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 // ---------- external data (cached) ----------
@@ -107,7 +134,7 @@ async function getJSON(url, ms = 20000) {
 const km = (a, b, c, d) => Math.hypot((a - c) * 111, (b - d) * 108.5);
 
 function forecast() {
-  return cached('forecast', 15 * 60e3, async () => {
+  return cached('forecast' + ':' + L(), 15 * 60e3, async () => {
     const u = `https://api.open-meteo.com/v1/forecast?latitude=${CENTER.lat}&longitude=${CENTER.lng}&hourly=precipitation,precipitation_probability,wind_speed_10m&forecast_hours=24&timezone=Asia%2FBangkok`;
     const j = await getJSON(u); const h = j.hourly;
     const total = h.precipitation.reduce((s, x) => s + (x || 0), 0);
@@ -120,7 +147,7 @@ function forecast() {
   });
 }
 function waterLevels() {
-  return cached('water', 10 * 60e3, async () => {
+  return cached('water' + ':' + L(), 10 * 60e3, async () => {
     const j = await getJSON('https://api-v3.thaiwater.net/api/v1/thaiwater30/public/waterlevel_load', 30000);
     const L = j.waterlevel_data.data.filter((s) => s.station && s.station.tele_station_lat && s.waterlevel_msl != null);
     const pick = L.map((s) => ({ s, d: km(s.station.tele_station_lat, s.station.tele_station_long, CENTER.lat, CENTER.lng) }))
@@ -139,7 +166,7 @@ function waterLevels() {
   });
 }
 function rainStations() {
-  return cached('rain', 10 * 60e3, async () => {
+  return cached('rain' + ':' + L(), 10 * 60e3, async () => {
     const j = await getJSON('https://api-v3.thaiwater.net/api/v1/thaiwater30/public/rain_24h', 30000);
     const L = (j.data || []).filter((s) => s.geocode?.province_code === '20' && s.station?.tele_station_lat)
       .map((s) => ({ name: s.station.tele_station_name.th, amphoe: s.geocode.amphoe_name.th, rain24h: +s.rain_24h, at: s.rainfall_datetime, lat: s.station.tele_station_lat, lng: s.station.tele_station_long, d: km(s.station.tele_station_lat, s.station.tele_station_long, CENTER.lat, CENTER.lng) }))
@@ -150,18 +177,20 @@ function rainStations() {
 
 // ---------- app ----------
 const app = express();
-app.set('trust proxy', 1);
+app.set('trust proxy', 1); // Render sits behind one proxy hop → req.ip = real client IP
+app.get('/healthz', (req, res) => res.set('cache-control', 'no-store').type('text/plain').send('ok'));
+app.use((req, res, next) => als.run({ lang: pickLang(req) }, next));
 app.use(express.json({ limit: '4mb' }));
 app.get('/uploads/:f', wrap(async (req, res) => { const p = await store.getPhoto(req.params.f); if (!p) return res.status(404).end(); res.set('content-type', p.mime).set('cache-control', 'public, max-age=604800').send(p.buf); }));
 const escH = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const color = (c, d) => (/^#[0-9a-fA-F]{3,8}$/.test(c || '') ? c : d);
 function renderIndex(req, res) {
   const st = db.settings, h = fs.readFileSync(path.join(__dirname, 'public/index.html'), 'utf8');
-  const out = h.replace(/\{\{T:([a-z0-9_.-]+)\|([^}]*)\}\}/g, (_, k, d) => escH(S(k, d)))
+  const out = h.replace('<html lang="th">', `<html lang="${{ th: 'th', en: 'en', zh: 'zh-CN' }[L()]}" data-lang="${L()}">`).replace(/\{\{T:([a-z0-9_.-]+)\|([^}]*)\}\}/g, (_, k, d) => escH(S(k, d)))
     .replace('{{THEME}}', `:root{--primary:${color(st.primary, '#0369a1')};--header:${color(st.header, '#0c4a6e')};--bg:${color(st.bg, '#f0f9ff')}}`)
     .replace('{{LOGO}}', st.logoUrl && /^(https?:\/\/|\/)/.test(st.logoUrl) ? `<img src="${escH(st.logoUrl)}" alt="" style="height:32px">` : escH(st.logo || '🌊'))
     .replace('{{HEADERCOLOR}}', color(st.header, '#0c4a6e'));
-  res.set('content-type', 'text/html; charset=utf-8').set('cache-control', 'no-cache').send(out);
+  res.set('content-type', 'text/html; charset=utf-8').set('cache-control', 'no-cache').set('vary', 'Cookie').send(out);
 }
 app.get(['/', '/index.html'], renderIndex);
 app.get(['/admin', '/admin/'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
@@ -169,9 +198,37 @@ app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 const rl = new Map();
 function limit(req, res, next) { const k = req.ip + req.path, now = Date.now(); const a = (rl.get(k) || []).filter((t) => now - t < 60e3); if (a.length >= 10) return res.status(429).json({ error: S('err.ratelimit', 'ส่งถี่เกินไป ลองใหม่ในอีกสักครู่') }); a.push(now); rl.set(k, a); next(); }
 
+// ---------- anti-spam ----------
+const asHits = new Map(); const asStats = { honeypot: 0, tooFast: 0, rate: 0, blocked: 0, captcha: 0, merged: 0 };
+setInterval(() => { const now = Date.now(); for (const [k, a] of asHits) { const b = a.filter((t) => now - t < 3600e3); if (b.length) asHits.set(k, b); else asHits.delete(k); } }, 300e3).unref();
+const ipBlocked = (ip) => (db.antispam.blocked || []).some((b) => { b = String(b).trim(); if (!b) return false; if (b.endsWith('*')) return ip.startsWith(b.slice(0, -1)); return ip === b || ip === '::ffff:' + b; });
+async function turnstileOk(token, ip) {
+  if (!token) return false;
+  try { const r = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', { method: 'POST', body: new URLSearchParams({ secret: TURNSTILE.secret, response: String(token), remoteip: ip }), signal: AbortSignal.timeout(8000) }); return (await r.json()).success === true; } catch { return false; }
+}
+const guard = (kind) => wrap(async (req, res, next) => {
+  const A = db.antispam, ip = req.ip || '', b = req.body || {};
+  if (ipBlocked(ip)) { asStats.blocked++; return res.status(403).json({ error: S('err.blocked', 'ไม่สามารถส่งข้อมูลจากเครือข่ายนี้ได้ กรุณาโทร 1669 / 1784 / 1337') }); }
+  if (A.on) {
+    if (A.honeypot && String(b.website || '').trim()) { asStats.honeypot++; return res.json({ ok: true, id: kind[0].toUpperCase() + '-' + (1000 + Math.floor(Math.random() * 9000)) }); }
+    const ft = Number(b._ft); if (A.minFillSec > 0 && !(ft >= A.minFillSec * 1000)) { asStats.tooFast++; return res.status(400).json({ error: S('err.toofast', 'ส่งเร็วเกินไป กรุณาตรวจข้อมูลแล้วกดส่งอีกครั้ง') }); }
+    const lim = A.limits[kind]; const dev = String(req.headers['x-device-id'] || b._dev || '').slice(0, 64);
+    if (lim && lim.n > 0) { const now = Date.now(), win = lim.min * 60e3, keys = ['ip:' + kind + ':' + ip, ...(dev ? ['dev:' + kind + ':' + dev] : [])];
+      const arrs = keys.map((k) => (asHits.get(k) || []).filter((t) => now - t < win));
+      if (arrs.some((a) => a.length >= lim.n)) { asStats.rate++; const oldest = Math.min(...arrs.filter((a) => a.length >= lim.n).map((a) => a[0])); res.set('retry-after', String(Math.ceil((oldest + win - now) / 1000))); return res.status(429).json({ error: S('err.ratelimit', 'ส่งถี่เกินไป ลองใหม่ในอีกสักครู่') }); }
+      keys.forEach((k, i) => { arrs[i].push(now); asHits.set(k, arrs[i]); }); }
+  }
+  if (TURNSTILE && !(await turnstileOk(b.cfToken, ip))) { asStats.captcha++; return res.status(400).json({ error: S('err.captcha', 'กรุณายืนยันว่าไม่ใช่บอท (captcha) แล้วลองอีกครั้ง') }); }
+  next();
+});
+const recent = (arr, ms) => { const since = Date.now() - ms; const out = []; for (let i = arr.length - 1; i >= 0; i--) { if (Date.parse(arr[i].createdAt) < since) break; out.push(arr[i]); } return out; };
+const dist = (a, b, c, d) => km(a, b, c, d) * 1000;
+function findDup(coll, pred) { const A = db.antispam; if (!A.on || !A.dedupe) return null; return recent(db[coll], A.dedupeMin * 60e3).find(pred) || null; }
+function confirmDup(x) { x.confirms = (x.confirms || 1) + 1; x.lastConfirmedAt = new Date().toISOString(); asStats.merged++; save(); return x; }
+
 const visible = (arr) => arr.filter((x) => x.status !== 'hidden');
 app.get('/api/health', (req, res) => res.json({ ok: true, storage: store.kind, time: new Date().toISOString() }));
-app.get('/api/config', (req, res) => res.json({ city: 'เมืองพัทยา', province: 'ชลบุรี', center: CENTER, levels: LEVELS(), kinds: KINDS(), statusNames: STATUS_TEXT(), contacts: db.contacts, texts: db.texts, settings: db.settings, cctv: visible(db.cctv), links: visible(db.links) }));
+app.get('/api/config', (req, res) => res.json({ city: 'เมืองพัทยา', province: 'ชลบุรี', center: CENTER, levels: LEVELS(), kinds: KINDS(), statusNames: STATUS_TEXT(), contacts: db.contacts, texts: textsFor(L()), lang: L(), langs: LANGS, turnstileSiteKey: TURNSTILE?.site || null, antispam: { minFillSec: db.antispam.on ? db.antispam.minFillSec : 0 }, settings: db.settings, cctv: visible(db.cctv), links: visible(db.links) }));
 app.get('/api/forecast', wrap(async (req, res) => res.json(await forecast())));
 app.get('/api/water', wrap(async (req, res) => res.json(await waterLevels())));
 app.get('/api/rain', wrap(async (req, res) => res.json(await rainStations())));
@@ -182,22 +239,27 @@ app.get('/api/events', (req, res) => {
 
 // water reports (public)
 app.get('/api/reports', (req, res) => { const since = Date.now() - (num(req.query.hours) || 48) * 3600e3; res.json(db.reports.filter((r) => r.status !== 'hidden' && Date.parse(r.createdAt) > since).map(publicReport).reverse()); });
-app.post('/api/reports', limit, wrap(async (req, res) => {
+app.post('/api/reports', guard('reports'), wrap(async (req, res) => {
   const b = req.body || {}; const lat = num(b.lat), lng = num(b.lng);
   if (!LEVEL_CM[b.level]) return res.status(400).json({ error: S('err.level', 'เลือกระดับน้ำ') });
   if (lat == null || !inPattaya(lat, lng)) return res.status(400).json({ error: S('err.outside', 'ตำแหน่งต้องอยู่ในพื้นที่พัทยา/บางละมุง') });
+  const dup = findDup('reports', (x) => x.status !== 'hidden' && x.level === b.level && dist(x.lat, x.lng, lat, lng) <= db.antispam.dedupeMeters);
+  if (dup) { confirmDup(dup); broadcast('report', publicReport(dup)); return res.json({ ok: true, id: dup.id, merged: true, confirms: dup.confirms }); }
   const a = area(b.areaId);
   const r = { id: newId('R'), areaId: a?.id || null, areaName: a?.name || clean(b.areaName, 80), level: b.level, lat, lng, note: clean(b.note, 300), photo: await savePhoto(b.photo), status: 'new', createdAt: new Date().toISOString() };
   db.reports.push(r); save(); broadcast('report', publicReport(r)); broadcast('staff:report', r, true); res.json({ ok: true, id: r.id });
 }));
 
 // help requests (food/supplies, rescue, medical)
-app.post('/api/requests', limit, wrap(async (req, res) => {
+app.post('/api/requests', guard('requests'), wrap(async (req, res) => {
   const b = req.body || {}; const a = area(b.areaId);
   if (!a) return res.status(400).json({ error: S('err.area', 'เลือกพื้นที่') });
   if (!a.served) return res.status(400).json({ error: S('err.notserved', 'ยังไม่เปิดรับคำขอทางเว็บสำหรับพื้นที่นี้ กรุณาโทร 1669 / 1784 / 1337') + ` (${a.name})` });
   const phone = clean(b.phone, 20); if (last4(phone).length < 4) return res.status(400).json({ error: S('err.phone', 'กรอกเบอร์โทรที่ติดต่อได้') });
   const name = clean(b.name, 80); if (!name) return res.status(400).json({ error: S('err.name', 'กรอกชื่อ') });
+  const kd = KINDS()[b.kind] ? b.kind : 'food', la = num(b.lat), ln = num(b.lng);
+  const dup = findDup('requests', (x) => x.status !== 'deleted' && x.kind === kd && x.areaId === a.id && (last4(x.phone) === last4(phone) || (la != null && x.lat != null && dist(x.lat, x.lng, la, ln) <= db.antispam.dedupeMeters)));
+  if (dup) { confirmDup(dup); broadcast('staff:update', dup, true); return res.json({ ok: true, id: dup.id, merged: true, confirms: dup.confirms }); }
   const r = { id: newId('C'), kind: KINDS()[b.kind] ? b.kind : 'food', areaId: a.id, areaName: a.name, name, phone, people: num(b.people) || 1,
     needs: (Array.isArray(b.needs) ? b.needs : []).map((x) => clean(x, 40)).slice(0, 10), level: LEVEL_CM[b.level] ? b.level : null,
     lat: num(b.lat), lng: num(b.lng), address: clean(b.address, 300), note: clean(b.note, 500), photo: await savePhoto(b.photo),
@@ -213,14 +275,18 @@ app.get('/api/status', (req, res) => {
 });
 
 // missing persons (private) & lost-found (public)
-app.post('/api/missing', limit, wrap(async (req, res) => {
+app.post('/api/missing', guard('missing'), wrap(async (req, res) => {
   const b = req.body || {}; if (!clean(b.personName) || last4(b.reporterPhone).length < 4) return res.status(400).json({ error: S('err.missing', 'กรอกชื่อผู้สูญหายและเบอร์ผู้แจ้ง') });
+  const dup = findDup('missing', (x) => x.personName.toLowerCase() === clean(b.personName, 80).toLowerCase() && last4(x.reporterPhone) === last4(b.reporterPhone));
+  if (dup) { confirmDup(dup); return res.json({ ok: true, id: dup.id, merged: true, confirms: dup.confirms }); }
   const r = { id: newId('M'), personName: clean(b.personName, 80), age: clean(b.age, 10), lastSeen: clean(b.lastSeen, 300), description: clean(b.description, 500), reporterName: clean(b.reporterName, 80), reporterPhone: clean(b.reporterPhone, 20), photo: await savePhoto(b.photo), status: 'searching', createdAt: new Date().toISOString() };
   db.missing.push(r); save(); broadcast('staff:missing', r, true); res.json({ ok: true, id: r.id });
 }));
 app.get('/api/lostfound', (req, res) => res.json(db.lostfound.filter((x) => x.status !== 'hidden').map(({ phone, ...x }) => ({ ...x, phoneMasked: 'xxx-xxx-' + last4(phone) })).reverse()));
-app.post('/api/lostfound', limit, wrap(async (req, res) => {
+app.post('/api/lostfound', guard('lostfound'), wrap(async (req, res) => {
   const b = req.body || {}; if (!clean(b.title) || last4(b.phone).length < 4) return res.status(400).json({ error: S('err.lf', 'กรอกหัวข้อและเบอร์ติดต่อ') });
+  const ty = b.type === 'found' ? 'found' : 'lost', dup = findDup('lostfound', (x) => x.type === ty && x.title.toLowerCase() === clean(b.title, 100).toLowerCase() && last4(x.phone) === last4(b.phone));
+  if (dup) { confirmDup(dup); return res.json({ ok: true, id: dup.id, merged: true, confirms: dup.confirms }); }
   const r = { id: newId('L'), type: b.type === 'found' ? 'found' : 'lost', category: clean(b.category, 30), title: clean(b.title, 100), detail: clean(b.detail, 500), place: clean(b.place, 120), phone: clean(b.phone, 20), photo: await savePhoto(b.photo), status: 'open', createdAt: new Date().toISOString() };
   db.lostfound.push(r); save(); broadcast('lostfound', { id: r.id }); broadcast('staff:lostfound', r, true); res.json({ ok: true, id: r.id });
 }));
@@ -397,13 +463,26 @@ app.put('/api/admin/cctv/pattaya/:id', admin, (req, res) => {
 });
 
 // ---------- back-office: texts & settings ----------
-app.get('/api/admin/texts', admin, (req, res) => { const reg = require('./texts').build(); Object.assign(TEXTS, reg); res.json(Object.values(TEXTS).map((t) => ({ key: t.key, group: t.group, g: t.g, default: t.d, value: db.texts[t.key] ?? null }))); });
+app.get('/api/admin/texts', admin, (req, res) => { const reg = require('./texts').build(); Object.assign(TEXTS, reg);
+  res.json(Object.values(TEXTS).map((t) => ({ key: t.key, group: t.group, g: t.g, default: t.d, value: db.texts[t.key] ?? null,
+    i18n: { en: { default: TR.en[t.key] ?? '', value: db.i18n.en[t.key] ?? null }, zh: { default: TR.zh[t.key] ?? '', value: db.i18n.zh[t.key] ?? null } } }))); });
 app.put('/api/admin/texts', admin, (req, res) => {
   const vals = req.body?.values || (req.body?.key ? { [req.body.key]: req.body.value } : {}); const ch = [];
-  for (const [k, v] of Object.entries(vals)) { if (!TEXTS[k]) continue; const s = String(v ?? '').slice(0, 2000); if (s === '' || s === TEXTS[k].d) delete db.texts[k]; else db.texts[k] = s; ch.push(k); }
-  audit(req, 'texts', 'texts', null, ch.join(', ')); save(); broadcast('cms', { coll: 'texts' }); res.json({ ok: true, n: ch.length });
+  const lang = ['en', 'zh'].includes(req.body?.lang) ? req.body.lang : 'th', tgt = lang === 'th' ? db.texts : db.i18n[lang];
+  for (const [k, v] of Object.entries(vals)) { if (!TEXTS[k]) continue; const s = String(v ?? '').slice(0, 2000); const def = lang === 'th' ? TEXTS[k].d : TR[lang][k]; if (s === '' || s === def) delete tgt[k]; else tgt[k] = s; ch.push(k); }
+  audit(req, 'texts', 'texts', lang, ch.join(', ')); save(); broadcast('cms', { coll: 'texts' }); res.json({ ok: true, n: ch.length });
 });
-app.delete('/api/admin/texts/:key', admin, (req, res) => { delete db.texts[req.params.key]; audit(req, 'text-reset', 'texts', req.params.key); save(); broadcast('cms', { coll: 'texts' }); res.json({ ok: true }); });
+app.delete('/api/admin/texts/:key', admin, (req, res) => { const lang = ['en', 'zh'].includes(req.query.lang) ? req.query.lang : 'th'; delete (lang === 'th' ? db.texts : db.i18n[lang])[req.params.key]; audit(req, 'text-reset', 'texts', req.params.key, lang); save(); broadcast('cms', { coll: 'texts' }); res.json({ ok: true }); });
+app.get('/api/admin/antispam', admin, (req, res) => res.json({ antispam: db.antispam, defaults: AS_DEFAULT, stats: asStats, turnstile: !!TURNSTILE, yourIp: req.ip }));
+app.put('/api/admin/antispam', admin, (req, res) => {
+  const b = req.body || {}, A = db.antispam; if (b.reset) db.antispam = JSON.parse(JSON.stringify(AS_DEFAULT));
+  else { const n = (x, lo, hi, d) => { x = Number(x); return Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : d; };
+    if ('on' in b) A.on = !!b.on; if ('honeypot' in b) A.honeypot = !!b.honeypot; if ('dedupe' in b) A.dedupe = !!b.dedupe;
+    A.minFillSec = n(b.minFillSec, 0, 120, A.minFillSec); A.dedupeMin = n(b.dedupeMin, 1, 1440, A.dedupeMin); A.dedupeMeters = n(b.dedupeMeters, 10, 5000, A.dedupeMeters); A.maxPhotoMB = n(b.maxPhotoMB, 0.2, 3, A.maxPhotoMB);
+    for (const k of Object.keys(AS_DEFAULT.limits)) if (b.limits?.[k]) A.limits[k] = { n: n(b.limits[k].n, 0, 1000, A.limits[k].n), min: n(b.limits[k].min, 1, 1440, A.limits[k].min) };
+    if (Array.isArray(b.blocked)) A.blocked = [...new Set(b.blocked.map((x) => String(x).trim().slice(0, 64)).filter(Boolean))].slice(0, 2000); }
+  audit(req, 'antispam', 'antispam', null, JSON.stringify(db.antispam).slice(0, 300)); save(); res.json({ ok: true, antispam: db.antispam });
+});
 app.get('/api/admin/settings', admin, (req, res) => res.json({ settings: db.settings, defaults: DEFAULT_SETTINGS }));
 app.put('/api/admin/settings', admin, (req, res) => {
   const b = req.body || {}, s = db.settings;
@@ -455,5 +534,5 @@ app.get('/api/route', wrap(async (req, res) => {
   res.json({ ok: true, engine, avoids, warning: avoids ? null : (zones.length ? S('map.warnnoavoid', 'ไม่พบเส้นทางที่เลี่ยงจุดน้ำท่วมได้ทั้งหมด — เส้นทางนี้ผ่านจุดเสี่ยงน้อยที่สุด ใช้ความระมัดระวัง') : null), zonesCount: zones.length, zones, best, alternatives: order.slice(1), gmaps });
 }));
 app.get('*', renderIndex);
-app.use((err, req, res, next) => { console.error(err); res.status(500).json({ error: 'เกิดข้อผิดพลาดในระบบ' }); });
+app.use((err, req, res, next) => { if (err.status && err.status < 500) return res.status(err.status).json({ error: err.message }); console.error(err); res.status(500).json({ error: 'เกิดข้อผิดพลาดในระบบ' }); });
 init().then(() => app.listen(PORT, () => console.log(`Pattaya flood center on http://localhost:${PORT} · storage=${store.kind} · admin user "${ADMIN_USERNAME}"`))).catch((e) => { console.error('startup failed', e); process.exit(1); });

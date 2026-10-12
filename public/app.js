@@ -2,9 +2,30 @@
 const $ = (s, r = document) => r.querySelector(s), app = $('#app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const C = { cfg: null }, CENTER = [12.9236, 100.8825];
-const T = (k, d) => esc(C.cfg?.texts?.[k] || d);
-const api = async (u, o = {}) => { const r = await fetch(u, { headers: { 'content-type': 'application/json' }, credentials: 'same-origin', ...o, body: o.body && JSON.stringify(o.body) }); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status); return j; };
-const fmt = (iso) => iso ? new Date(iso.replace(' ', 'T') + (iso.length <= 16 ? ':00+07:00' : '')).toLocaleString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' }) + ' ' + T('nav.timesuffix', 'น.') : '-';
+const T = (k, d) => esc(C.cfg?.texts?.[k] ?? d);
+// ---------- language (TH default · EN · 中文) ----------
+const LANGS = ['th', 'en', 'zh'], LOCALE = { th: 'th-TH', en: 'en-GB', zh: 'zh-CN' };
+const LANG = (() => { const q = new URLSearchParams(location.search).get('lang'); let l = q && LANGS.includes(q) ? q : localStorage.getItem('pfc_lang');
+  if (!LANGS.includes(l)) { const n = (navigator.languages || [navigator.language || '']).map((x) => String(x).toLowerCase()); l = n.find((x) => /^(th|en|zh)/.test(x))?.slice(0, 2) || 'th'; }
+  localStorage.setItem('pfc_lang', l); document.cookie = 'pfc_lang=' + l + ';path=/;max-age=31536000;samesite=lax';
+  if (document.documentElement.dataset.lang && document.documentElement.dataset.lang !== l && !sessionStorage.getItem('pfc_lr')) { sessionStorage.setItem('pfc_lr', 1); location.reload(); }
+  sessionStorage.removeItem('pfc_lr'); document.documentElement.lang = { th: 'th', en: 'en', zh: 'zh-CN' }[l]; return l; })();
+const setLang = (l) => { localStorage.setItem('pfc_lang', l); document.cookie = 'pfc_lang=' + l + ';path=/;max-age=31536000;samesite=lax'; const u = new URL(location.href); u.searchParams.delete('lang'); location.href = u.toString(); };
+(() => { const d = document.createElement('div'); d.className = 'langsw'; d.innerHTML = [['th', 'TH'], ['en', 'EN'], ['zh', '中文']].map(([l, n]) => `<button type="button" data-l="${l}" class="${l === LANG ? 'on' : ''}" aria-pressed="${l === LANG}">${n}</button>`).join('');
+  d.onclick = (e) => e.target.dataset.l && e.target.dataset.l !== LANG && setLang(e.target.dataset.l); document.querySelector('header.top').insertBefore(d, document.querySelector('#live')); })();
+const DEV = localStorage.getItem('pfc_dev') || (localStorage.setItem('pfc_dev', (crypto.randomUUID?.() || String(Math.random()).slice(2) + Date.now())), localStorage.getItem('pfc_dev'));
+// ---------- anti-spam helpers: honeypot + fill time + optional Turnstile ----------
+let formStart = Date.now();
+const SUBMIT = /^\/api\/(reports|requests|missing|lostfound)$/;
+function armForm() { formStart = Date.now(); const go = document.querySelector('#go'); if (!go || !SUBMIT.test(go.dataset.api || '') && !document.querySelector('[data-pub]')) return;
+  if (!document.querySelector('#website')) go.insertAdjacentHTML('beforebegin', '<div class="hp" aria-hidden="true"><label>Website<input id="website" name="website" tabindex="-1" autocomplete="off"></label></div>');
+  const sk = C.cfg?.turnstileSiteKey; if (sk && !document.querySelector('#cfw')) { go.insertAdjacentHTML('beforebegin', '<div id="cfw" style="margin:8px 0"></div>');
+    const draw = () => window.turnstile && window.turnstile.render('#cfw', { sitekey: sk, language: LANG === 'zh' ? 'zh-cn' : LANG });
+    if (window.turnstile) draw(); else { const sc = document.createElement('script'); sc.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'; sc.onload = draw; document.head.appendChild(sc); } } }
+const api = async (u, o = {}) => { if (o.body && SUBMIT.test(u)) { o.body = { ...o.body, website: document.querySelector('#website')?.value || '', _ft: Date.now() - formStart, _dev: DEV, cfToken: window.turnstile && document.querySelector('#cfw') ? window.turnstile.getResponse('#cfw') : undefined }; }
+  const r = await fetch(u, { headers: { 'content-type': 'application/json', 'x-lang': LANG, 'x-device-id': DEV }, credentials: 'same-origin', ...o, body: o.body && JSON.stringify(o.body) });
+  if (SUBMIT.test(u) && window.turnstile && document.querySelector('#cfw')) try { window.turnstile.reset('#cfw'); } catch {} const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status); return j; };
+const fmt = (iso) => iso ? new Date(iso.replace(' ', 'T') + (iso.length <= 16 ? ':00+07:00' : '')).toLocaleString(LOCALE[LANG], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' }) + ' ' + T('nav.timesuffix', 'น.') : '-';
 const tel = (p) => p ? `<a class="tel" href="tel:${esc(p.replace(/[^\d+]/g, ''))}">📞 ${esc(p)}</a>` : `<span class="ph">${T('nav.nophone', 'รอใส่เบอร์')}</span>`;
 const LVCOL = { dry: '#16a34a', ankle: '#ca8a04', knee: '#ea580c', waist: '#dc2626', chest: '#9f1239', roof: '#4c0519' };
 const km = (a, b, c, d) => Math.hypot((a - c) * 111, (b - d) * 108.5);
@@ -18,7 +39,7 @@ function chrome() {
 function tiles(m) { L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(m); return m; }
 async function photoData(input) { const f = input.files?.[0]; if (!f) return null; const img = await createImageBitmap(f); const s = Math.min(1, 1280 / Math.max(img.width, img.height)); const c = document.createElement('canvas'); c.width = img.width * s; c.height = img.height * s; c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); return c.toDataURL('image/jpeg', 0.75); }
 function gps() { return new Promise((ok, no) => navigator.geolocation ? navigator.geolocation.getCurrentPosition((p) => ok([p.coords.latitude, p.coords.longitude]), () => no(new Error(T('err.gpsdenied', 'ไม่ได้รับอนุญาตตำแหน่ง'))), { enableHighAccuracy: true, timeout: 10000 }) : no(new Error(T('err.nogps', 'อุปกรณ์ไม่รองรับ GPS')))); }
-async function geocode(q) { const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=th&viewbox=100.70,13.10,101.10,12.75&bounded=1&accept-language=th&q=${encodeURIComponent(q)}`); return r.json(); }
+async function geocode(q) { const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=th&viewbox=100.70,13.10,101.10,12.75&bounded=1&accept-language=${LANG === 'zh' ? 'zh,en' : LANG}&q=${encodeURIComponent(q)}`); return r.json(); }
 const back = () => `<p><a href="#/">${T('nav.back', '← กลับหน้าหลัก')}</a></p>`;
 const title = (k, d) => { document.title = (C.cfg?.texts?.[k] || d) + ' | ' + (C.cfg?.texts?.['site.name'] || 'ศูนย์ช่วยเหลือน้ำท่วม'); };
 
@@ -33,7 +54,7 @@ const listeners = new Set(); const on = (fn) => { listeners.add(fn); return fn; 
 const routes = {
   '': home, sos: (q) => helpForm('food'), help: (q) => helpForm(q.kind || 'evacuate'), report, status, area, map: mapPage, updates, missing, 'lost-found': lostFound, cctv, weather, staff: staffPage, admin: () => { location.href = '/admin'; },
 };
-async function render() { listeners.clear(); const [p, qs] = location.hash.replace(/^#\/?/, '').split('?'); const q = Object.fromEntries(new URLSearchParams(qs || '')); window.scrollTo(0, 0); app.innerHTML = `<p class="muted">${C.cfg ? T('nav.loading', 'กำลังโหลด…') : '…'}</p>`; try { await cfg(); await (routes[p] || home)(q); } catch (e) { app.innerHTML = `<p class="err">${esc(e.message)}</p>` + back(); } }
+async function render() { listeners.clear(); const [p, qs] = location.hash.replace(/^#\/?/, '').split('?'); const q = Object.fromEntries(new URLSearchParams(qs || '')); window.scrollTo(0, 0); app.innerHTML = `<p class="muted">${C.cfg ? T('nav.loading', 'กำลังโหลด…') : '…'}</p>`; try { await cfg(); await (routes[p] || home)(q); document.querySelector('#go')?.setAttribute('data-pub', ''); if (['report', 'sos', 'help', 'missing', 'lost-found'].includes(p)) armForm(); } catch (e) { app.innerHTML = `<p class="err">${esc(e.message)}</p>` + back(); } }
 addEventListener('hashchange', render); render();
 
 async function home() {
@@ -112,7 +133,7 @@ async function report() {
    <p class="muted">${T('report.privacy', 'รายงานแสดงบนแผนที่สาธารณะ (ไม่เก็บชื่อ/เบอร์) และใช้คำนวณเส้นทางเลี่ยงน้ำ 24 ชม.')}</p></div>`;
   const lv = chipSel($('#lv')), loc = locPicker($('#loc'));
   $('#ar').onchange = (e) => { const a = c.contacts.areas.find((x) => x.id === e.target.value); a && loc.set([a.lat, a.lng]); };
-  $('#go').onclick = async () => { try { if (!loc.lat) throw new Error(C.cfg.texts?.['err.pin'] || 'ปักหมุดตำแหน่งก่อน'); const r = await api('/api/reports', { method: 'POST', body: { level: [...lv][0], areaId: $('#ar').value, lat: loc.lat, lng: loc.lng, note: $('#nt').value, photo: await photoData($('#ph')) } }); app.innerHTML = `<div class="card"><h2 class="ok">${T('msg.reportthanks', 'ขอบคุณ! ส่งรายงานแล้ว')} ${r.id}</h2><a class="btn" href="#/map">${T('msg.viewmap', 'ดูบนแผนที่')}</a> <a class="btn alt" href="#/">${T('nav.home', 'หน้าหลัก')}</a></div>`; } catch (e) { $('#msg').innerHTML = `<span class="err">${esc(e.message)}</span>`; } };
+  $('#go').onclick = async () => { try { if (!loc.lat) throw new Error(C.cfg.texts?.['err.pin'] || 'ปักหมุดตำแหน่งก่อน'); const r = await api('/api/reports', { method: 'POST', body: { level: [...lv][0], areaId: $('#ar').value, lat: loc.lat, lng: loc.lng, note: $('#nt').value, photo: await photoData($('#ph')) } }); app.innerHTML = `<div class="card"><h2 class="ok">${T('msg.reportthanks', 'ขอบคุณ! ส่งรายงานแล้ว')} ${r.id}</h2>${r.merged ? `<p>${T('msg.merged', 'มีผู้รายงานจุดนี้แล้ว — นับเป็นการยืนยันเพิ่ม')} (${T('updates.confirmed', 'ยืนยันโดย')} ${r.confirms} ${T('updates.people', 'คน')})</p>` : ''}<a class="btn" href="#/map">${T('msg.viewmap', 'ดูบนแผนที่')}</a> <a class="btn alt" href="#/">${T('nav.home', 'หน้าหลัก')}</a></div>`; } catch (e) { $('#msg').innerHTML = `<span class="err">${esc(e.message)}</span>`; } };
 }
 async function helpForm(kind) {
   const c = await cfg(); const served = c.contacts.areas.filter((a) => a.served);
@@ -147,7 +168,7 @@ async function area() {
 }
 async function updates() {
   title('updates.title', '🕒 อัปเดตระดับน้ำล่าสุด');
-  const draw = async () => { const rs = await api('/api/reports?hours=72'); $('#ul').innerHTML = rs.length ? rs.map((r) => `<li><span><span class="badge" style="background:${LVCOL[r.level]}">${esc(r.levelText)}</span><br>${esc(r.areaName) || T('updates.noarea', 'ไม่ระบุพื้นที่')} · ${esc(r.note || '')}<br><span class="muted">${fmt(r.createdAt)} · ${r.id}${r.status === 'verified' ? ' · ' + T('updates.verified', '✔ เจ้าหน้าที่ยืนยัน') : ''}</span></span>${r.photo ? `<img class="thumb" src="${r.photo}">` : ''}</li>`).join('') : `<li>${T('updates.none', 'ยังไม่มีรายงานใน 72 ชม.')}</li>`; };
+  const draw = async () => { const rs = await api('/api/reports?hours=72'); $('#ul').innerHTML = rs.length ? rs.map((r) => `<li><span><span class="badge" style="background:${LVCOL[r.level]}">${esc(r.levelText)}</span><br>${esc(r.areaName) || T('updates.noarea', 'ไม่ระบุพื้นที่')} · ${esc(r.note || '')}<br><span class="muted">${fmt(r.createdAt)} · ${r.id}${r.status === 'verified' ? ' · ' + T('updates.verified', '✔ เจ้าหน้าที่ยืนยัน') : ''}${r.confirms > 1 ? ' · 👥 ' + T('updates.confirmed', 'ยืนยันโดย') + ' ' + r.confirms + ' ' + T('updates.people', 'คน') : ''}</span></span>${r.photo ? `<img class="thumb" src="${r.photo}">` : ''}</li>`).join('') : `<li>${T('updates.none', 'ยังไม่มีรายงานใน 72 ชม.')}</li>`; };
   app.innerHTML = back() + `<div class="card"><h2>${T('updates.title', '🕒 อัปเดตระดับน้ำล่าสุด')}</h2><p class="muted">${T('updates.desc', 'อัปเดตอัตโนมัติแบบเรียลไทม์')}</p><ul class="list" id="ul"></ul></div>`; await draw(); on((t) => (t === 'report' || t === 'deleted') && draw());
 }
 async function missing() {

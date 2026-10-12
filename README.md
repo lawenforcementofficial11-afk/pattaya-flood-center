@@ -56,3 +56,15 @@ STAFF_PASSWORD=รหัสของคุณ npm start      # http://localhost:
 - ข้อความ: เขียนในโค้ดเป็น `T('key','ค่าเริ่มต้น')` (app.js), `S('key','…')` (server.js), `{{T:key|…}}` (index.html) — `texts.js` สแกนสร้างรายการให้หน้าแก้ไขอัตโนมัติ
 - ที่เก็บข้อมูล: ตั้ง `DATABASE_URL` (Postgres) → เก็บทุกอย่างรวมรูปใน Postgres (ตาราง `pfc_kv`, `pfc_photos`) ไม่ตั้ง → ไฟล์ `data/db.json` (บน Render ฟรีจะหายเมื่อรีสตาร์ต)
 - CCTV เมืองพัทยา: ดึงรายชื่อ/พิกัดกล้องจาก API สาธารณะ `livestream.pattaya.go.th/kapi/live/map` (แคช 10 นาที) ภาพสดเป็น WebRTC ที่ต้องผ่าน Cloudflare Turnstile และห้ามฝัง (CSP frame-ancestors) จึงลิงก์ไปเว็บต้นทาง ไม่ proxy สตรีม · กล้องที่เพิ่มเองรองรับ HLS/snapshot/iframe
+
+## Languages (TH / EN / 中文)
+Thai is the default. Public pages have a TH/EN/中文 switcher (saved in localStorage + `pfc_lang` cookie), auto-pick from the browser language on first visit, and `?lang=th|en|zh`; `<html lang>` follows. Default translations live in `i18n/en.json` and `i18n/zh.json`; admins edit every string per language in /admin → ข้อความทั้งเว็บ (language tabs, reset-to-default per language).
+
+## Anti-spam
+Public submit forms (reports, help requests, missing, lost-found) have per-IP + per-device rate limits (defaults: reports 5/10 min, help requests 3/10 min, missing 3/10 min, lost-found 5/10 min), a honeypot field, a minimum fill time (3 s), duplicate merging (same spot+type within 10 min / 150 m → "confirmed by N"), photo type/size checks (JPG/PNG/WEBP, ≤3 MB, magic bytes), and a blocked IP list (`1.2.3.4` or `1.2.3.*`). Configure in /admin → 🛡️ กันสแปม. Optional Cloudflare Turnstile: set `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET`. `trust proxy` is set to 1 for Render.
+
+## Health / keep-awake
+`GET /healthz` → `ok` (no DB work). `.github/workflows/keepalive.yml` pings it every 10 minutes. GitHub disables scheduled workflows after 60 days with no repository activity — re-enable it in the Actions tab if that happens.
+
+## Demo data
+Off by default; records marked ทดสอบ / ข้อมูลตัวอย่าง are removed at startup. Set `DEMO_SEED=1` to keep/seed demo records.
