@@ -9,12 +9,13 @@ const ACT = { login: 'เข้าสู่ระบบ', update: 'แก้ไ�
 
 function showLogin() {
   $('#nav').innerHTML = ''; $('#who').textContent = '';
-  app.innerHTML = `<div class="card" style="max-width:420px;margin:30px auto"><h2>🔐 เข้าสู่ระบบหลังบ้าน</h2><label>ชื่อผู้ใช้</label><input id="un" autocomplete="username" value="admin"><label>รหัสผ่าน</label><input id="pw" type="password" autocomplete="current-password"><button class="btn" id="go">เข้าสู่ระบบ</button> <span id="msg"></span><p class="muted"><a href="/">← กลับหน้าเว็บ</a></p></div>`;
+  app.innerHTML = `<div class="card" style="max-width:420px;margin:30px auto"><h2>🔐 เข้าสู่ระบบหลังบ้าน</h2><form id="lf" method="post" action="#" autocomplete="on"><label for="un">ชื่อผู้ใช้</label><input id="un" name="username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" value="admin"><label for="pw">รหัสผ่าน</label><input id="pw" name="password" type="password" autocomplete="current-password"><button class="btn" id="go" type="submit">เข้าสู่ระบบ</button> <span id="msg"></span></form><p class="muted"><a href="/">← กลับหน้าเว็บ</a></p></div>`;
   const go = async () => { try { await api('/api/staff/login', { method: 'POST', body: { username: $('#un').value, password: $('#pw').value } }); await boot(); } catch (e) { $('#msg').innerHTML = `<span class="err">${esc(e.message)}</span>`; } };
-  $('#go').onclick = go; $('#pw').onkeydown = (e) => e.key === 'Enter' && go(); $('#pw').focus();
+  // NB: never use `onkeydown = (e) => cond && fn()` — returning false from an on* handler cancels every keystroke.
+  $('#lf').addEventListener('submit', (e) => { e.preventDefault(); go(); }); $('#pw').focus();
 }
 async function boot() {
-  try { SC = await api('/api/admin/schema'); } catch { return showLogin(); }
+  try { SC = await api('/api/admin/schema'); } catch { if (!$('#lf')) showLogin(); return; }
   $('#who').innerHTML = `${esc(SC.me.name || SC.me.username)} · ${esc(SC.roles[SC.me.role])}`;
   addEventListener('hashchange', route); route();
 }

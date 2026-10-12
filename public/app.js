@@ -262,9 +262,9 @@ async function mapPage(q) {
 async function staffPage() {
   let me; try { me = await api('/api/staff/me'); } catch {}
   title('staff.login.title', '👮 เจ้าหน้าที่และทีมกู้ภัย เข้าสู่ระบบ');
-  if (!me) { app.innerHTML = back() + `<div class="card"><h2>${T('staff.login.title', '👮 เจ้าหน้าที่และทีมกู้ภัย เข้าสู่ระบบ')}</h2><input id="un" autocomplete="username" placeholder="${T('staff.login.user', 'ชื่อผู้ใช้')}"><input id="pw" type="password" autocomplete="current-password" placeholder="${T('staff.login.pw', 'รหัสผ่าน')}"><button class="btn" id="go">${T('staff.login.submit', 'เข้าสู่ระบบ')}</button> <span id="msg"></span><p class="muted">${T('staff.login.note', 'ผู้ดูแลระบบสร้างบัญชีให้ที่หน้า ระบบหลังบ้าน /admin')}</p></div>`;
+  if (!me) { app.innerHTML = back() + `<div class="card"><h2>${T('staff.login.title', '👮 เจ้าหน้าที่และทีมกู้ภัย เข้าสู่ระบบ')}</h2><form id="lf" method="post" action="#" autocomplete="on"><input id="un" name="username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="${T('staff.login.user', 'ชื่อผู้ใช้')}"><input id="pw" name="password" type="password" autocomplete="current-password" placeholder="${T('staff.login.pw', 'รหัสผ่าน')}"><button class="btn" id="go" type="submit">${T('staff.login.submit', 'เข้าสู่ระบบ')}</button> <span id="msg"></span></form><p class="muted">${T('staff.login.note', 'ผู้ดูแลระบบสร้างบัญชีให้ที่หน้า ระบบหลังบ้าน /admin')}</p></div>`;
     const go = async () => { try { await api('/api/staff/login', { method: 'POST', body: { username: $('#un').value, password: $('#pw').value } }); render(); } catch (e) { $('#msg').innerHTML = `<span class="err">${esc(e.message)}</span>`; } };
-    $('#go').onclick = go; $('#pw').onkeydown = (e) => e.key === 'Enter' && go(); return; }
+    $('#lf').addEventListener('submit', (e) => { e.preventDefault(); go(); }); return; }
   let tab = 'requests', data;
   const S = { requests: ['new', 'triaged', 'assigned', 'enroute', 'resolved', 'closed'], reports: ['new', 'verified', 'hidden'], missing: ['searching', 'found', 'closed'], lostfound: ['open', 'closed', 'hidden'], roads: ['open', 'hidden'] };
   const canDel = me.user.role !== 'staff';
