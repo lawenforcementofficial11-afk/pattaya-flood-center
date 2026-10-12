@@ -12,7 +12,7 @@ const LANG = (() => { const q = new URLSearchParams(location.search).get('lang')
   sessionStorage.removeItem('pfc_lr'); document.documentElement.lang = { th: 'th', en: 'en', zh: 'zh-CN' }[l]; return l; })();
 const setLang = (l) => { localStorage.setItem('pfc_lang', l); document.cookie = 'pfc_lang=' + l + ';path=/;max-age=31536000;samesite=lax'; const u = new URL(location.href); u.searchParams.delete('lang'); location.href = u.toString(); };
 (() => { const d = document.createElement('div'); d.className = 'langsw'; d.innerHTML = [['th', 'TH'], ['en', 'EN'], ['zh', '中文']].map(([l, n]) => `<button type="button" data-l="${l}" class="${l === LANG ? 'on' : ''}" aria-pressed="${l === LANG}">${n}</button>`).join('');
-  d.onclick = (e) => e.target.dataset.l && e.target.dataset.l !== LANG && setLang(e.target.dataset.l); document.querySelector('header.top').insertBefore(d, document.querySelector('#live')); })();
+  d.onclick = (e) => { if (e.target.dataset.l && e.target.dataset.l !== LANG) setLang(e.target.dataset.l); }; document.querySelector('header.top').insertBefore(d, document.querySelector('#live')); })();
 const DEV = localStorage.getItem('pfc_dev') || (localStorage.setItem('pfc_dev', (crypto.randomUUID?.() || String(Math.random()).slice(2) + Date.now())), localStorage.getItem('pfc_dev'));
 // ---------- anti-spam helpers: honeypot + fill time + optional Turnstile ----------
 let formStart = Date.now();

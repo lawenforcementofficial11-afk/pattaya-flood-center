@@ -88,7 +88,8 @@ function edit(k, x, done) {
    ${x.history ? `<h3>ประวัติ</h3><ul>${x.history.map((h) => `<li class="muted">${fmt(h.at)} · ${esc(stName(h.s))} · ${esc(h.by || '')} ${esc(h.note || '')}</li>`).join('')}</ul>` : ''}
    ${x.lat ? `<p><a target="_blank" href="https://www.google.com/maps?q=${x.lat},${x.lng}">เปิดตำแหน่งใน Google Maps</a></p>` : ''}
    <p>${ro ? '' : '<button class="btn" id="sv">บันทึก</button> '}<button class="btn alt" id="cx">ปิด</button>${!isNew && can('admin') ? ' <button class="btn red" id="dl" style="float:right">ลบ</button>' : ''} <span id="msg"></span></p></div>`;
-  document.body.appendChild(m); const close = () => m.remove(); $('#cx', m).onclick = close; m.onclick = (e) => e.target === m && close();
+  document.body.appendChild(m); const close = () => m.remove(); $('#cx', m).onclick = close; // NB: never return false from an on* handler (it cancels the default action, e.g. checkbox ticks inside the modal)
+  m.addEventListener('click', (e) => { if (e.target === m) close(); });
   $('#sv', m) && ($('#sv', m).onclick = async () => { const body = {}; m.querySelectorAll('[data-f]').forEach((i) => (body[i.dataset.f] = i.type === 'checkbox' ? i.checked : i.value)); if (body.status === x.status) delete body.status;
     try { await api(isNew ? `/api/admin/c/${k}` : `/api/admin/c/${k}/${encodeURIComponent(x.id)}`, { method: isNew ? 'POST' : 'PUT', body }); toast('บันทึกแล้ว'); close(); done(); } catch (e) { $('#msg', m).innerHTML = `<span class="err">${esc(e.message)}</span>`; } });
   $('#dl', m) && ($('#dl', m).onclick = async () => { if (!confirm('ลบรายการนี้ถาวร?')) return; await api(`/api/admin/c/${k}/${encodeURIComponent(x.id)}`, { method: 'DELETE' }); toast('ลบแล้ว'); close(); done(); });
@@ -180,7 +181,7 @@ async function modSettings(el) {
     <p><button class="btn" id="msv">💾 บันทึกการตรวจสอบ</button> <button class="btn alt" id="mrs">คืนค่าเริ่มต้น</button></p></div>`;
   const put = async (body) => { await api('/api/admin/moderation/settings', { method: 'PUT', body }); toast('บันทึกการตรวจสอบแล้ว'); modSettings(el); };
   $('#msv', el).onclick = () => put({ mode: el.querySelector('[name=mmode]:checked').value, autoVerifyN: $('#mN').value, clearN: $('#mC').value, voteLimit: { n: $('#mVn').value, min: $('#mVm').value }, distinctIp: $('#mIp').checked, holdLinks: $('#mL').checked, holdPhones: $('#mP').checked, words: $('#mW').value.split('\n'), flagged: $('#mF').value.split(/\s+/) }).catch((e) => toast(e.message, false));
-  $('#mrs', el).onclick = () => confirm('คืนค่าเริ่มต้นการตรวจสอบ?') && put({ reset: true });
+  $('#mrs', el).onclick = () => { if (confirm('คืนค่าเริ่มต้นการตรวจสอบ?')) put({ reset: true }); };
 }
 async function geoSettings(el) {
   const { geofence: g, source } = await api('/api/admin/geofence');
