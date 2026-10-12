@@ -296,7 +296,7 @@ function afterMod(coll, r) {
 app.get('/api/health', (req, res) => res.json({ ok: true, storage: store.kind, time: new Date().toISOString() }));
 app.get('/api/config', (req, res) => res.json({ city: 'เมืองพัทยา', province: 'ชลบุรี', center: CENTER, levels: LEVELS(), kinds: KINDS(), statusNames: STATUS_TEXT(), contacts: { ...db.contacts, areas: db.contacts.areas.filter(insideArea) }, geo: { on: db.geofence.on, bufferM: db.geofence.bufferM, bbox: BBOX, boundary: BOUNDARY.geometry }, moderation: { mode: M().mode }, texts: textsFor(L()), lang: L(), langs: LANGS, turnstileSiteKey: TURNSTILE?.site || null, antispam: { minFillSec: db.antispam.on ? db.antispam.minFillSec : 0 }, settings: db.settings, cctv: visible(db.cctv), links: visible(db.links) }));
 const HOTSPOTS = JSON.parse(fs.readFileSync(path.join(__dirname, 'geo/flood-hotspots.json'), 'utf8'));
-app.get('/api/hotspots', (req, res) => res.json({ note: HOTSPOTS.note, spots: HOTSPOTS.spots.map((x) => ({ ...x, label: L() === 'th' ? x.name : x.name_en })) }));
+app.get('/api/hotspots', (req, res) => res.json({ note: HOTSPOTS.note, spots: HOTSPOTS.spots.map(({ sources, ...x }) => ({ ...x, label: L() === 'th' ? x.name : x.name_en })) }));
 app.get('/api/forecast', wrap(async (req, res) => res.json(await forecast())));
 app.get('/api/water', wrap(async (req, res) => res.json(await waterLevels())));
 app.get('/api/rain', wrap(async (req, res) => res.json(await rainStations())));

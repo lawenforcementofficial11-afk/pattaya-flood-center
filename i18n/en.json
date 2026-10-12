@@ -350,5 +350,5 @@
 "geo.label":"Pattaya City boundary",
 "map.layer.hs":"Flood-prone / recurring flood spots",
 "map.hs.title":"Recurring flood spot",
-"map.hs.approx":"Approximate location · sources:",
+"map.hs.approx":"Approximate location, based on news reports of repeated flooding",
 "map.lg.hs":"Recurring flood spot"}
