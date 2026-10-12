@@ -36,7 +36,7 @@
 "weather.stationnote":"There is no telemetry water-level station inside Pattaya/Bang Lamung, so the nearest stations in Chonburi/Rayong/Chachoengsao are shown",
 "err.ratelimit":"Too many submissions, please try again shortly",
 "err.level":"Choose a water level",
-"err.outside":"This location is outside Pattaya City. This service only accepts reports inside Pattaya City (including Ko Lan) — in an emergency call 1669 / 1784",
+"err.outside":"This location is outside Pattaya City. This service only accepts reports inside Pattaya City — in an emergency call 1669 / 1784",
 "err.area":"Choose an area",
 "err.notserved":"Web requests are not yet open for this area. Please call 1669 / 1784 / 1337",
 "err.phone":"Enter a phone number we can reach",
@@ -347,4 +347,8 @@
 "err.voted":"This device/network has already voted on this report",
 "err.notfound":"Report not found",
 "err.outside.near":"Agencies near you:",
-"geo.label":"Pattaya City boundary"}
+"geo.label":"Pattaya City boundary",
+"map.layer.hs":"Flood-prone / recurring flood spots",
+"map.hs.title":"Recurring flood spot",
+"map.hs.approx":"Approximate location · sources:",
+"map.lg.hs":"Recurring flood spot"}

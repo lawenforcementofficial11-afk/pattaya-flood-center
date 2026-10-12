@@ -122,7 +122,7 @@ async function savePhoto(dataUrl) {
   const f = crypto.randomBytes(8).toString('hex') + '.' + (m[1] === 'jpeg' ? 'jpg' : m[1]);
   await store.putPhoto(f, 'image/' + m[1], buf); return '/uploads/' + f;
 }
-// ---------- jurisdiction: Pattaya City municipal boundary (OSM relation 12645794, incl. Ko Lan / Ko Sak / Ko Khrok) ----------
+// ---------- jurisdiction: Pattaya City municipal boundary (OSM relation 12645794, mainland only, islands excluded) ----------
 const BOUNDARY = JSON.parse(fs.readFileSync(path.join(__dirname, 'geo/pattaya-boundary.geojson'), 'utf8'));
 const POLYS = BOUNDARY.geometry.type === 'MultiPolygon' ? BOUNDARY.geometry.coordinates : [BOUNDARY.geometry.coordinates];
 const BBOX = (() => { let a = [90, 180, -90, -180]; for (const p of POLYS) for (const [x, y] of p[0]) a = [Math.min(a[0], y), Math.min(a[1], x), Math.max(a[2], y), Math.max(a[3], x)]; return a; })(); // [s,w,n,e]
@@ -138,7 +138,7 @@ const insideArea = (a) => a.lat == null || inPattaya(a.lat, a.lng);
 function outsideErr(lat, lng) {
   const near = db.contacts.areas.filter((a) => a.lat != null && !insideArea(a) && a.phone).map((a) => ({ a, d: lat != null ? km(lat, lng, a.lat, a.lng) : 0 })).sort((x, y) => x.d - y.d).slice(0, 3);
   const hint = near.length ? ' ' + S('err.outside.near', 'หน่วยงานใกล้คุณ:') + ' ' + near.map(({ a }) => `${a.org || a.name} ${a.phone}`).join(' · ') : '';
-  return Object.assign(new Error(S('err.outside', 'ตำแหน่งนี้อยู่นอกเขตเมืองพัทยา ระบบนี้รับเรื่องเฉพาะในเขตเมืองพัทยา (รวมเกาะล้าน) — กรณีฉุกเฉินโทร 1669 / 1784') + hint), { status: 400, outside: true, nearby: near.map(({ a }) => ({ name: a.name, org: a.org, phone: a.phone })) });
+  return Object.assign(new Error(S('err.outside', 'ตำแหน่งนี้อยู่นอกเขตเมืองพัทยา ระบบนี้รับเรื่องเฉพาะในเขตเมืองพัทยา — กรณีฉุกเฉินโทร 1669 / 1784') + hint), { status: 400, outside: true, nearby: near.map(({ a }) => ({ name: a.name, org: a.org, phone: a.phone })) });
 }
 const area = (id) => db.contacts.areas.find((a) => a.id === id);
 const last4 = (p) => String(p || '').replace(/\D/g, '').slice(-4);
@@ -295,6 +295,8 @@ function afterMod(coll, r) {
 }
 app.get('/api/health', (req, res) => res.json({ ok: true, storage: store.kind, time: new Date().toISOString() }));
 app.get('/api/config', (req, res) => res.json({ city: 'เมืองพัทยา', province: 'ชลบุรี', center: CENTER, levels: LEVELS(), kinds: KINDS(), statusNames: STATUS_TEXT(), contacts: { ...db.contacts, areas: db.contacts.areas.filter(insideArea) }, geo: { on: db.geofence.on, bufferM: db.geofence.bufferM, bbox: BBOX, boundary: BOUNDARY.geometry }, moderation: { mode: M().mode }, texts: textsFor(L()), lang: L(), langs: LANGS, turnstileSiteKey: TURNSTILE?.site || null, antispam: { minFillSec: db.antispam.on ? db.antispam.minFillSec : 0 }, settings: db.settings, cctv: visible(db.cctv), links: visible(db.links) }));
+const HOTSPOTS = JSON.parse(fs.readFileSync(path.join(__dirname, 'geo/flood-hotspots.json'), 'utf8'));
+app.get('/api/hotspots', (req, res) => res.json({ note: HOTSPOTS.note, spots: HOTSPOTS.spots.map((x) => ({ ...x, label: L() === 'th' ? x.name : x.name_en })) }));
 app.get('/api/forecast', wrap(async (req, res) => res.json(await forecast())));
 app.get('/api/water', wrap(async (req, res) => res.json(await waterLevels())));
 app.get('/api/rain', wrap(async (req, res) => res.json(await rainStations())));
