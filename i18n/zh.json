@@ -329,6 +329,7 @@
 "site.livetitle":"实时更新",
 "site.live":"● 实时",
 "site.footer1":"水位数据：国家水资源信息中心（HII）· 预报：Open-Meteo · 地图 © OpenStreetMap",
+"site.credit":"开发者：海军上士 通猜·猜西通（Thongchai Chaisithong），资深市政执法官",
 "site.footer2":"系统原型 — 非芭提雅市官方网站",
 "err.photo":"照片须为 JPG/PNG/WEBP 格式且不超过大小限制",
 "err.toofast":"提交过快，请核对信息后再次提交",

@@ -276,3 +276,6 @@ async function roadqPage() {
   }));
   let t; sseL.add((ev) => { if (ev !== 'staff:roadq') return; clearTimeout(t); t = setTimeout(() => location.hash === '#roadq' && roadqPage(), 400); });
 }
+
+// developer credit (CMS key site.credit)
+fetch('/api/config?lang=th').then((r) => r.json()).then((c) => { const t = c.texts && c.texts['site.credit']; const el = document.getElementById('credit'); if (t && el) el.textContent = t; }).catch(() => {});
