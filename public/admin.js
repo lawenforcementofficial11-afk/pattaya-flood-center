@@ -5,7 +5,11 @@ const api = async (u, o = {}) => { const r = await fetch(u, { headers: { 'conten
 const fmt = (iso) => iso ? new Date(iso).toLocaleString('th-TH', { day: 'numeric', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' }) : '-';
 const toast = (m, ok = true) => { const d = document.createElement('div'); d.textContent = m; d.style.cssText = `position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:${ok ? '#166534' : '#b91c1c'};color:#fff;padding:10px 16px;border-radius:10px;z-index:3000`; document.body.appendChild(d); setTimeout(() => d.remove(), 2500); };
 let SC = null; const RANK = { staff: 1, admin: 2, superadmin: 3 }; const can = (r) => SC && RANK[SC.me.role] >= RANK[r];
-const ACT = { login: 'เข้าสู่ระบบ', update: 'แก้ไข', delete: 'ลบ', create: 'สร้าง', contacts: 'แก้เบอร์ติดต่อ', texts: 'แก้ข้อความ', 'text-reset': 'คืนค่าข้อความ', antispam: 'ตั้งค่ากันสแปม', settings: 'ตั้งค่าเว็บ', password: 'เปลี่ยนรหัสผ่าน', export: 'ส่งออก CSV', 'bulk-status': 'เปลี่ยนสถานะหลายรายการ' };
+const ACT = { login: 'เข้าสู่ระบบ', update: 'แก้ไข', delete: 'ลบ', create: 'สร้าง', contacts: 'แก้เบอร์ติดต่อ', texts: 'แก้ข้อความ', 'text-reset': 'คืนค่าข้อความ', antispam: 'ตั้งค่ากันสแปม', settings: 'ตั้งค่าเว็บ', password: 'เปลี่ยนรหัสผ่าน', export: 'ส่งออก CSV', 'bulk-status': 'เปลี่ยนสถานะหลายรายการ', 'mod-approve': 'อนุมัติรายงาน', 'mod-reject': 'ปฏิเสธรายงาน', 'mod-hold': 'กักรายงานไว้ตรวจ', 'mod-auto': 'ยืนยันอัตโนมัติ', 'mod-held': 'กักอัตโนมัติ', 'mod-cleared': 'แจ้งน้ำลดแล้ว', 'mod-mode': 'เปลี่ยนโหมดตรวจสอบ', 'mod-settings': 'ตั้งค่าการตรวจสอบ' };
+let MODN = 0; const modBadgeNav = () => { const a = document.querySelector('#nav a[href="#mod"]'); if (a) a.innerHTML = '🛂 ตรวจสอบรายงาน' + (MODN ? ` <span class="nbadge">${MODN}</span>` : ''); };
+const sseL = new Set(); function adminSSE() { const es = new EventSource('/api/events');
+  es.addEventListener('staff:mod', (e) => { MODN = JSON.parse(e.data).total; modBadgeNav(); sseL.forEach((f) => f('staff:mod')); });
+  for (const t of ['staff:report', 'staff:lostfound', 'staff:update']) es.addEventListener(t, () => sseL.forEach((f) => f(t))); }
 
 function showLogin() {
   $('#nav').innerHTML = ''; $('#who').textContent = '';
@@ -17,18 +21,19 @@ function showLogin() {
 async function boot() {
   try { SC = await api('/api/admin/schema'); } catch { if (!$('#lf')) showLogin(); return; }
   $('#who').innerHTML = `${esc(SC.me.name || SC.me.username)} · ${esc(SC.roles[SC.me.role])}`;
+  try { MODN = (await api('/api/admin/moderation')).counts.total; } catch {} adminSSE();
   addEventListener('hashchange', route); route();
 }
 function nav(cur) {
-  const items = [['dash', '📊 ภาพรวม'], ...Object.entries(SC.colls).filter(([k, c]) => c.triage || can('admin')).map(([k, c]) => ['c/' + k, c.label.split(' (')[0]]),
+  const items = [['dash', '📊 ภาพรวม'], ['mod', '🛂 ตรวจสอบรายงาน'], ...Object.entries(SC.colls).filter(([k, c]) => c.triage || can('admin')).map(([k, c]) => ['c/' + k, c.label.split(' (')[0]]),
     ...(can('admin') ? [['ptycctv', '📹 กล้องเมืองพัทยา'], ['texts', '📝 ข้อความทั้งเว็บ'], ['settings', '🎨 ตั้งค่าเว็บ'], ['antispam', '🛡️ กันสแปม'], ['audit', '🧾 ประวัติการแก้ไข']] : []), ...(can('superadmin') ? [['users', '👥 ผู้ใช้']] : []), ['me', '🔑 รหัสผ่านของฉัน'], ['logout', '🚪 ออก']];
   $('#nav').innerHTML = items.map(([h, l]) => `<a href="#${h}" class="${h === cur ? 'on' : ''}">${esc(l)}</a>`).join('');
-  $('#nav .on')?.scrollIntoView({ inline: 'center', block: 'nearest' });
+  modBadgeNav(); $('#nav .on')?.scrollIntoView({ inline: 'center', block: 'nearest' });
 }
 async function route() {
-  document.querySelectorAll('.modal').forEach((m) => m.remove()); const h = location.hash.slice(1) || 'dash'; nav(h); window.scrollTo(0, 0); app.innerHTML = '<p class="muted">กำลังโหลด…</p>';
+  document.querySelectorAll('.modal').forEach((m) => m.remove()); sseL.clear(); const h = location.hash.slice(1) || 'dash'; nav(h); window.scrollTo(0, 0); app.innerHTML = '<p class="muted">กำลังโหลด…</p>';
   try { if (h === 'logout') { await api('/api/staff/logout', { method: 'POST' }); location.hash = ''; return showLogin(); }
-    if (h.startsWith('c/')) return await collPage(h.slice(2)); await ({ dash, texts, settings, antispam, users, audit, me, ptycctv }[h] || dash)(); } catch (e) { app.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+    if (h.startsWith('c/')) return await collPage(h.slice(2)); await ({ dash, mod: modPage, texts, settings, antispam, users, audit, me, ptycctv }[h] || dash)(); } catch (e) { app.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
 }
 const stName = (s) => SC.statusNames[s] || s;
 
@@ -131,9 +136,55 @@ async function antispam() {
 
 // ---------- settings ----------
 const SECNAME = { food: '🍚 ขออาหาร / ถุงยังชีพ', contact: '☎️ ติดต่อผู้ประสานงาน + 🩺 ผู้ป่วย', sos: '🆘 แถบฉุกเฉิน (โทร 1669)', report: '📏 รายงานระดับน้ำ', near: '📍 น้ำท่วมใกล้บ้านฉันไหม', services: 'บริการอื่น', situation: '🌧️ สถานการณ์น้ำตอนนี้', moreinfo: 'ลิงก์ข้อมูลเพิ่มเติม', emergency: '📞 เบอร์ฉุกเฉิน', stafflink: '👮 ปุ่มเข้าสู่ระบบเจ้าหน้าที่' };
+// ---------- moderation queue ----------
+const MODE_NAME = { hybrid: 'ผสม (hybrid) — แสดงทันทีแบบจาง + ป้าย "รอตรวจสอบ"', approve: 'อนุมัติก่อนทุกรายการ — ไม่แสดงจนกว่าจะอนุมัติ', off: 'ปิด — ยืนยันทุกรายการทันที' };
+const REASON = (r) => r.startsWith('word:') ? 'คำไม่เหมาะสม: ' + r.slice(5) : { link: 'มีลิงก์', phone: 'มีเบอร์โทร', flagged: 'อุปกรณ์/IP ถูกติดธง' }[r] || r;
+let modMap;
+async function modPage() {
+  const d = await api('/api/admin/moderation'); MODN = d.counts.total; modBadgeNav();
+  const LV = SC.levels || {}; const sel = new Set();
+  const card = (x) => `<div class="mq ${x.mod}" data-k="${x.coll}|${esc(x.id)}"><label class="mqsel"><input type="checkbox" class="rowsel" data-k="${x.coll}|${esc(x.id)}"></label>
+    ${x.photo ? `<a href="${esc(x.photo)}" target="_blank"><img class="mqimg" src="${esc(x.photo)}"></a>` : '<div class="mqimg none">ไม่มีรูป</div>'}
+    <div class="mqbody"><b>${esc(x.id)}</b> <span class="pill ${x.mod}">${x.mod === 'held' ? '⛔ กักไว้ (ซ่อน)' : '⏳ รอตรวจสอบ'}</span> <span class="pill">${x.coll === 'reports' ? '📏 ระดับน้ำ' : '🐾 ของหาย–ได้คืน'}</span>
+      <div>${x.coll === 'reports' ? `<b>${esc(LV[x.level] || x.level)}</b> · ${esc(x.areaName || '')}` : `<b>${esc(x.type === 'lost' ? 'ตามหา' : 'เก็บได้')}: ${esc(x.title)}</b> · ${esc(x.place || '')}`}</div>
+      <div>${esc(x.note || x.detail || '')}</div>
+      <div class="muted">${fmt(x.createdAt)} · 👍 ${x.yes} · 🌤️ ${x.no}${x.cleared ? ' · อาจไม่ท่วมแล้ว' : ''}${x.modReasons?.length ? ' · <span class="err">' + x.modReasons.map((r) => esc(REASON(r))).join(', ') + '</span>' : ''}${x.src?.ip ? ` · IP <code>${esc(x.src.ip)}</code>` : ''}</div>
+      <div class="bar" style="margin:6px 0 0"><button class="btn sm ok1" data-a="approve">✔ อนุมัติ</button><button class="btn sm alt" data-a="reject">✖ ปฏิเสธ</button>${x.mod === 'pending' ? '<button class="btn sm alt" data-a="hold">⛔ กักไว้</button>' : ''}${x.lat ? `<button class="btn sm alt" data-a="zoom">🗺️</button>` : ''}</div></div></div>`;
+  const P = d.items.filter((x) => x.mod === 'pending'), H = d.items.filter((x) => x.mod === 'held');
+  app.innerHTML = `<div class="card"><h2>🛂 ตรวจสอบรายงานจากประชาชน</h2><p>โหมดปัจจุบัน: <b>${esc(MODE_NAME[d.mode])}</b> · ยืนยันอัตโนมัติเมื่อ ${d.settings.autoVerifyN} อุปกรณ์ยืนยัน${can('admin') ? ' · <a href="#settings">เปลี่ยนโหมด/เกณฑ์/คำต้องห้าม</a>' : ''}</p>
+    <p class="muted">คำขอช่วยเหลือ / อพยพ / ผู้ป่วย และตามหาคน ไม่ผ่านคิวนี้ — ส่งถึงเจ้าหน้าที่ทันทีเสมอ</p>
+    <div class="bar"><label style="font-weight:400"><input type="checkbox" id="all" class="rowsel"> เลือกทั้งหมด</label><button class="btn sm" id="bA">✔ อนุมัติที่เลือก</button><button class="btn sm alt" id="bR">✖ ปฏิเสธที่เลือก</button><span id="nsel" class="muted"></span></div>
+    <div id="mqmap" style="height:300px;border-radius:10px"></div></div>
+   <div class="grid two"><div class="card"><h3>⛔ กักไว้ — ไม่แสดงต่อสาธารณะ (${H.length})</h3>${H.map(card).join('') || '<p class="muted">ไม่มี</p>'}</div>
+    <div class="card"><h3>⏳ รอตรวจสอบ (${P.length})</h3>${P.map(card).join('') || '<p class="muted">ไม่มี</p>'}</div></div>
+   <div class="card"><h3>ผลการตรวจล่าสุด</h3><table><tbody>${d.recent.map((x) => `<tr><td>${esc(x.id)}</td><td>${x.mod === 'rejected' ? '✖ ปฏิเสธ' : '✔ ยืนยัน'}</td><td>${esc(x.modBy || '')}</td><td class="muted">${fmt(x.modAt)}</td></tr>`).join('') || '<tr><td class="muted">-</td></tr>'}</tbody></table></div>`;
+  if (modMap) { try { modMap.remove(); } catch {} } modMap = L.map('mqmap').setView([12.9236, 100.8825], 12); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap', maxZoom: 19 }).addTo(modMap);
+  const pts = d.items.filter((x) => x.lat); pts.forEach((x) => L.circleMarker([x.lat, x.lng], { radius: 8, color: x.mod === 'held' ? '#b91c1c' : '#d97706', fillOpacity: 0.6 }).addTo(modMap).bindPopup(`<b>${esc(x.id)}</b> ${esc(LV[x.level] || '')}<br>${esc(x.note || '')}`));
+  if (pts.length) modMap.fitBounds(pts.map((x) => [x.lat, x.lng]), { maxZoom: 15, padding: [20, 20] });
+  const act = async (keys, a) => { if (!keys.length) return toast('ยังไม่ได้เลือก', false); const r = await api('/api/admin/moderation/action', { method: 'POST', body: { action: a, items: keys.map((k) => { const [coll, id] = k.split('|'); return { coll, id }; }) } }); toast(`${{ approve: 'อนุมัติ', reject: 'ปฏิเสธ', hold: 'กักไว้' }[a]} ${r.n} รายการ`); modPage(); };
+  const upd = () => { $('#nsel').textContent = sel.size ? `เลือก ${sel.size} รายการ` : ''; };
+  app.onchange = (e) => { if (e.target.id === 'all') { document.querySelectorAll('.mq .rowsel').forEach((c) => { c.checked = e.target.checked; c.checked ? sel.add(c.dataset.k) : sel.delete(c.dataset.k); }); } else if (e.target.classList.contains('rowsel')) e.target.checked ? sel.add(e.target.dataset.k) : sel.delete(e.target.dataset.k); upd(); };
+  app.onclick = (e) => { const a = e.target.dataset.a; if (!a) return; const k = e.target.closest('.mq').dataset.k;
+    if (a === 'zoom') { const x = d.items.find((i) => i.coll + '|' + i.id === k); modMap.setView([x.lat, x.lng], 17); window.scrollTo(0, 0); return; } act([k], a).catch((er) => toast(er.message, false)); };
+  $('#bA').onclick = () => act([...sel], 'approve').catch((er) => toast(er.message, false)); $('#bR').onclick = () => { if (confirm(`ปฏิเสธ ${sel.size} รายการ?`)) act([...sel], 'reject').catch((er) => toast(er.message, false)); };
+  let t; sseL.add(() => { if (sel.size) return; clearTimeout(t); t = setTimeout(() => location.hash === '#mod' && modPage(), 400); });
+}
+async function modSettings(el) {
+  const { settings: m } = await api('/api/admin/moderation/settings'); const chk = (id, v, l) => `<label style="font-weight:400;display:block;margin:6px 0"><input type="checkbox" id="${id}" style="width:auto" ${v ? 'checked' : ''}> ${l}</label>`;
+  el.innerHTML = `<div class="card" id="modcard"><h2>🛂 การตรวจสอบรายงานจากประชาชน</h2><p class="muted">ใช้กับรายงานระดับน้ำและของหาย–ได้คืน · คำขอช่วยเหลือ/อพยพ/ผู้ป่วยไม่ถูกหน่วงเวลาเด็ดขาด · มีผลทันทีและบันทึกในประวัติการแก้ไข</p>
+    <label>โหมด</label><div id="mmode">${Object.entries(MODE_NAME).map(([v, l]) => `<label style="font-weight:400;display:block;margin:4px 0"><input type="radio" name="mmode" value="${v}" style="width:auto" ${m.mode === v ? 'checked' : ''}> ${esc(l)}</label>`).join('')}</div>
+    <div class="grid two"><div><label>ยืนยันอัตโนมัติเมื่อมีอุปกรณ์อื่นยืนยัน (ครั้ง)</label><input id="mN" type="number" min="1" value="${m.autoVerifyN}"><label>ถือว่า "อาจไม่ท่วมแล้ว" เมื่อแจ้งว่าไม่พบน้ำ (ครั้ง)</label><input id="mC" type="number" min="1" value="${m.clearN}">
+      <label>จำกัดการกดยืนยัน (ครั้ง / นาที ต่อ IP และอุปกรณ์)</label><div class="bar"><input id="mVn" type="number" value="${m.voteLimit.n}"> / <input id="mVm" type="number" value="${m.voteLimit.min}"></div>
+      ${chk('mIp', m.distinctIp, 'นับ 1 เสียงต่อ IP ด้วย (ไม่ใช่แค่ต่ออุปกรณ์)')}${chk('mL', m.holdLinks, 'กักรายงานที่มีลิงก์ / LINE ID')}${chk('mP', m.holdPhones, 'กักรายงานที่มีเบอร์โทรในข้อความ (สแปม)')}</div>
+     <div><label>คำต้องห้าม (บรรทัดละคำ ไทย/อังกฤษ)</label><textarea id="mW" rows="7">${esc(m.words.join('\n'))}</textarea><label>อุปกรณ์/IP ที่ติดธง (กักทุกรายงาน) — บรรทัดละรายการ, ลงท้าย * ได้</label><textarea id="mF" rows="3">${esc((m.flagged || []).join('\n'))}</textarea></div></div>
+    <p><button class="btn" id="msv">💾 บันทึกการตรวจสอบ</button> <button class="btn alt" id="mrs">คืนค่าเริ่มต้น</button></p></div>`;
+  const put = async (body) => { await api('/api/admin/moderation/settings', { method: 'PUT', body }); toast('บันทึกการตรวจสอบแล้ว'); modSettings(el); };
+  $('#msv', el).onclick = () => put({ mode: el.querySelector('[name=mmode]:checked').value, autoVerifyN: $('#mN').value, clearN: $('#mC').value, voteLimit: { n: $('#mVn').value, min: $('#mVm').value }, distinctIp: $('#mIp').checked, holdLinks: $('#mL').checked, holdPhones: $('#mP').checked, words: $('#mW').value.split('\n'), flagged: $('#mF').value.split(/\s+/) }).catch((e) => toast(e.message, false));
+  $('#mrs', el).onclick = () => confirm('คืนค่าเริ่มต้นการตรวจสอบ?') && put({ reset: true });
+}
 async function settings() {
   const { settings: s } = await api('/api/admin/settings'); const secs = s.sections.map((x) => ({ ...x }));
-  app.innerHTML = `<div class="grid two"><div class="card"><h2>🎨 ชื่อเว็บ โลโก้ สี</h2><p class="muted">ชื่อเว็บ/คำโปรย/ส่วนท้าย/ชื่อหน้า แก้ได้ที่ <a href="#texts">ข้อความทั้งเว็บ</a> → กลุ่ม "ทั้งเว็บ"</p>
+  app.innerHTML = `<div id="modset"></div><div class="grid two"><div class="card"><h2>🎨 ชื่อเว็บ โลโก้ สี</h2><p class="muted">ชื่อเว็บ/คำโปรย/ส่วนท้าย/ชื่อหน้า แก้ได้ที่ <a href="#texts">ข้อความทั้งเว็บ</a> → กลุ่ม "ทั้งเว็บ"</p>
      <label>โลโก้ (อีโมจิ)</label><input id="logo" value="${esc(s.logo)}"><label>หรือ URL รูปโลโก้ (https://…)</label><input id="logoUrl" value="${esc(s.logoUrl)}">
      <label>สีหลัก (ปุ่ม/ลิงก์)</label><input type="color" id="primary" value="${esc(s.primary)}"><label>สีแถบด้านบน</label><input type="color" id="header" value="${esc(s.header)}"><label>สีพื้นหลัง</label><input type="color" id="bg" value="${esc(s.bg)}"></div>
     <div class="card"><h2>📢 ประกาศด่วน (แบนเนอร์)</h2><label><input type="checkbox" id="bon" style="width:auto" ${s.banner.on ? 'checked' : ''}> แสดงแบนเนอร์บนทุกหน้า</label><label>ข้อความ</label><textarea id="btext">${esc(s.banner.text)}</textarea>
@@ -144,7 +195,7 @@ async function settings() {
   const ds = () => { $('#secs').innerHTML = secs.map((x, i) => `<li><input type="checkbox" data-i="${i}" class="on" style="width:auto" ${x.on ? 'checked' : ''}><span>${esc(SECNAME[x.id] || x.id)}</span><button class="btn sm alt up" data-i="${i}">↑</button><button class="btn sm alt dn" data-i="${i}">↓</button></li>`).join(''); };
   $('#secs').onclick = (e) => { const i = +e.target.dataset.i; if (e.target.classList.contains('on')) secs[i].on = e.target.checked; const j = e.target.classList.contains('up') ? i - 1 : e.target.classList.contains('dn') ? i + 1 : -1; if (j >= 0 && j < secs.length) { [secs[i], secs[j]] = [secs[j], secs[i]]; ds(); } };
   const bp = () => { $('#bprev').innerHTML = $('#bon').checked && $('#btext').value ? `<div class="banner ${$('#blevel').value}" style="margin-top:8px;border-radius:8px">${esc($('#btext').value)}</div>` : '<p class="muted">(ไม่แสดงแบนเนอร์)</p>'; };
-  ['bon', 'btext', 'blevel'].forEach((id) => ($('#' + id).oninput = bp)); bp(); ds();
+  ['bon', 'btext', 'blevel'].forEach((id) => ($('#' + id).oninput = bp)); bp(); ds(); modSettings($('#modset'));
   $('#sv').onclick = async () => { await api('/api/admin/settings', { method: 'PUT', body: { logo: $('#logo').value, logoUrl: $('#logoUrl').value, primary: $('#primary').value, header: $('#header').value, bg: $('#bg').value, banner: { on: $('#bon').checked, text: $('#btext').value, level: $('#blevel').value }, sections: secs } }); toast('บันทึกแล้ว'); $('#pv').src = '/?t=' + Date.now(); };
   $('#rs').onclick = async () => { if (!confirm('คืนค่าการตั้งค่าเว็บทั้งหมด?')) return; await api('/api/admin/settings', { method: 'PUT', body: { reset: true } }); settings(); };
 }

@@ -8,3 +8,7 @@
 .modal{position:fixed;inset:0;background:#0007;z-index:2000;display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:20px 10px}.modal .card{width:100%;max-width:640px}
 .sections li{display:flex;gap:8px;align-items:center;padding:6px;border:1px solid #e2e8f0;border-radius:8px;margin:4px 0;background:#fff}.sections li span{flex:1}
 @media(max-width:640px){td,th{font-size:13px;padding:4px}.hide-m{display:none}}
+.nbadge{display:inline-block;min-width:18px;padding:0 6px;border-radius:999px;background:#dc2626;color:#fff;font-size:12px;text-align:center}
+.mq{display:flex;gap:10px;border:1px solid #e2e8f0;border-radius:10px;padding:8px;margin:8px 0;background:#fff}.mq.held{border-left:4px solid #b91c1c}.mq.pending{border-left:4px solid #d97706}
+.mqimg{width:96px;height:96px;object-fit:cover;border-radius:8px;flex:none}.mqimg.none{display:flex;align-items:center;justify-content:center;background:#f1f5f9;color:#94a3b8;font-size:12px}.mqbody{flex:1;min-width:0}.mqsel{flex:none}
+.pill.held{background:#fee2e2;color:#991b1b}.pill.pending{background:#fef3c7;color:#92400e}.btn.ok1{background:#16a34a}

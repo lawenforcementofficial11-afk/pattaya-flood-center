@@ -68,3 +68,14 @@ Public submit forms (reports, help requests, missing, lost-found) have per-IP + 
 
 ## Demo data
 Off by default; records marked ทดสอบ / ข้อมูลตัวอย่าง are removed at startup. Set `DEMO_SEED=1` to keep/seed demo records.
+
+## Moderation (hybrid) for citizen reports
+- Applies to water reports and lost&found. Help/evacuation/medical requests and missing persons are **never** moderated or delayed. Closed roads/detours are staff-created only, so they are always live.
+- States (`mod`): `pending` (รอตรวจสอบ: shown faded with a badge in hybrid mode), `verified` (ยืนยันแล้ว), `held` (hidden, in the review queue), `rejected`.
+- Modes (Admin → ตั้งค่าเว็บ → การตรวจสอบ, live + audit-logged): `hybrid` (default) / `approve` (nothing public until approved) / `off` (everything verified; switching to off verifies all pending items).
+- Auto-verify: in hybrid mode, after N distinct devices confirm (default 2; with `distinctIp` the IPs must be distinct too). Confirms come from the 'ยืนยันว่าจริง' button or from a duplicate report merged nearby. The reporter's own device doesn't count.
+- 'ไม่พบน้ำท่วมแล้ว' votes: when there are ≥ clearN of them after the last confirm, the report is marked "possibly cleared". Votes are limited to one per device per report, plus a rate limit.
+- Held automatically: anything matching the word list (Thai substring / English whole word), links / LINE IDs, phone numbers in the text, or flagged devices/IPs.
+- Queue: /admin#mod (pending + held, approve/reject/hold, bulk actions, map, photo; nav badge updates via SSE).
+- Routing avoidance uses **verified + pending** reports, because sending someone around an unconfirmed flood costs little and sending them into water is dangerous. It ignores held, rejected and possibly-cleared reports.
+- Migration: existing records with no `mod` become `verified` at startup. This works for both the file and Postgres stores, since they share the same JSON document.

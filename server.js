@@ -24,6 +24,12 @@ const DEMO_SEED = process.env.DEMO_SEED === '1';
 const TURNSTILE = process.env.TURNSTILE_SITE_KEY && process.env.TURNSTILE_SECRET ? { site: process.env.TURNSTILE_SITE_KEY, secret: process.env.TURNSTILE_SECRET } : null;
 const AS_DEFAULT = { on: true, honeypot: true, minFillSec: 3, dedupe: true, dedupeMin: 10, dedupeMeters: 150, maxPhotoMB: 3,
   limits: { reports: { n: 5, min: 10 }, requests: { n: 3, min: 10 }, missing: { n: 3, min: 10 }, lostfound: { n: 5, min: 10 } }, blocked: [] };
+// Hybrid moderation for citizen-published content (water reports + lost&found). Help/evacuation/medical requests and missing persons
+// are NEVER moderated: they always go straight to staff. Closed roads/detours are staff-created only (no citizen path) → always live.
+// mod: pending (public but faded in hybrid) · verified · held (hidden, needs staff) · rejected
+const MOD_DEFAULT = { mode: 'hybrid', autoVerifyN: 2, clearN: 2, distinctIp: true, holdLinks: true, holdPhones: true, voteLimit: { n: 20, min: 10 }, flagged: [],
+  words: ['เหี้ย', 'ควย', 'สัส', 'เย็ด', 'อีดอก', 'อีเหี้ย', 'ไอ้สัตว์', 'ส้นตีน', 'แม่มึง', 'พ่อมึง', 'บาคาร่า', 'สล็อต', 'เว็บพนัน', 'คาสิโน', 'fuck', 'shit', 'bitch', 'asshole', 'casino', 'slot', 'baccarat', 'porn', 'viagra'] };
+const MOD_COLLS = ['reports', 'lostfound'];
 
 // ---------- storage ----------
 let db;
@@ -39,6 +45,8 @@ async function init() {
   db.contacts ||= JSON.parse(JSON.stringify(seed));
   for (const k of ['reports', 'requests', 'missing', 'lostfound', 'audit', 'roads', 'users']) db[k] ||= [];
   db.seq ||= 1000; db.texts ||= {}; db.i18n ||= {}; for (const l of ['en', 'zh']) db.i18n[l] ||= {};
+  db.moderation = { ...JSON.parse(JSON.stringify(MOD_DEFAULT)), ...(db.moderation || {}) };
+  { let n = 0; for (const k of MOD_COLLS) for (const x of db[k]) if (!x.mod) { x.mod = 'verified'; x.modBy = 'migration'; n++; } if (n) console.log(`moderation: migrated ${n} existing records to verified`); }
   db.antispam = { ...JSON.parse(JSON.stringify(AS_DEFAULT)), ...(db.antispam || {}) }; db.antispam.limits = { ...AS_DEFAULT.limits, ...db.antispam.limits };
   // remove seeded demo / test data unless DEMO_SEED=1
   if (!DEMO_SEED) { const isDemo = (x) => /ทดสอบ|ข้อมูลตัวอย่าง/.test(JSON.stringify(x)); let n = 0;
@@ -116,7 +124,7 @@ async function savePhoto(dataUrl) {
 function inPattaya(lat, lng) { return lat > 12.6 && lat < 13.3 && lng > 100.6 && lng < 101.3; }
 const area = (id) => db.contacts.areas.find((a) => a.id === id);
 const last4 = (p) => String(p || '').replace(/\D/g, '').slice(-4);
-const publicReport = (r) => ({ confirms: r.confirms || 1, id: r.id, areaId: r.areaId, areaName: r.areaName, level: r.level, levelText: LEVELS()[r.level], cm: LEVEL_CM[r.level], lat: r.lat, lng: r.lng, note: r.note, photo: r.photo, createdAt: r.createdAt, status: r.status });
+const publicReport = (r) => ({ confirms: r.confirms || 1, mod: r.mod, cleared: !!r.cleared, yes: r.votes?.yes.length || 0, no: r.votes?.no.length || 0, id: r.id, areaId: r.areaId, areaName: r.areaName, level: r.level, levelText: LEVELS()[r.level], cm: LEVEL_CM[r.level], lat: r.lat, lng: r.lng, note: r.note, photo: r.photo, createdAt: r.createdAt, status: r.status });
 const publicRequest = (r) => ({ confirms: r.confirms || 1, id: r.id, kind: r.kind, areaName: r.areaName, lat: r.lat ? +r.lat.toFixed(3) : null, lng: r.lng ? +r.lng.toFixed(3) : null, needs: r.needs, status: r.status, statusText: r.statusText, createdAt: r.createdAt });
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -227,8 +235,48 @@ function findDup(coll, pred) { const A = db.antispam; if (!A.on || !A.dedupe) re
 function confirmDup(x) { x.confirms = (x.confirms || 1) + 1; x.lastConfirmedAt = new Date().toISOString(); asStats.merged++; save(); return x; }
 
 const visible = (arr) => arr.filter((x) => x.status !== 'hidden');
+
+// ---------- moderation ----------
+const M = () => db.moderation;
+const devOf = (req) => String(req.headers['x-device-id'] || req.body?._dev || '').replace(/[^\w.:-]/g, '').slice(0, 64);
+const reEsc = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const isFlagged = (ip, dev) => (M().flagged || []).some((f) => { f = String(f).trim(); if (!f) return false; if (dev && f === dev) return true; if (f.endsWith('*')) return ip.startsWith(f.slice(0, -1)) || ip.startsWith('::ffff:' + f.slice(0, -1)); return ip === f || ip === '::ffff:' + f; });
+function modReasons(text, ip, dev) {
+  const m = M(), raw = String(text || ''), t = raw.toLowerCase(), out = [];
+  const w = (m.words || []).map((x) => String(x).toLowerCase().trim()).filter(Boolean).find((w) => (/^[a-z0-9 ]+$/.test(w) ? new RegExp('\\b' + reEsc(w) + '\\b').test(t) : t.includes(w)));
+  if (w) out.push('word:' + w);
+  if (m.holdLinks && /(https?:\/\/|www\.|\b[a-z0-9-]+\.(com|net|org|xyz|io|me|ly|co|top|info|bet|vip|club|shop|th)\b|line\.me|t\.me|lin\.ee|bit\.ly|@[a-z0-9_.]{3,})/i.test(raw)) out.push('link');
+  if (m.holdPhones && /(\+?66|0)[\s.-]?\d(?:[\s.-]?\d){7,9}/.test(raw)) out.push('phone');
+  if (isFlagged(ip, dev)) out.push('flagged');
+  return out;
+}
+function initialMod(text, req) { if (M().mode === 'off') return { mod: 'verified', modBy: 'mode-off' }; const reasons = modReasons(text, req.ip || '', devOf(req)); return reasons.length ? { mod: 'held', modReasons: reasons } : { mod: 'pending' }; }
+const isPublic = (x) => x.status !== 'hidden' && (x.mod === 'verified' || (x.mod === 'pending' && M().mode !== 'approve'));
+// routing: verified + pending count as flood zones (a false detour is cheap, driving into water is not); held/rejected/"possibly cleared" are ignored
+const inRoute = (x) => x.status !== 'hidden' && (x.mod === 'verified' || x.mod === 'pending') && !x.cleared;
+const modCounts = () => { const o = { pending: 0, held: 0 }; for (const k of MOD_COLLS) for (const x of db[k]) if (o[x.mod] != null) o[x.mod]++; o.total = o.pending + o.held; return o; };
+const sysAudit = (action, coll, id, detail) => audit({}, action, coll, id, detail);
+function evaluate(r) {
+  const m = M(), v = (r.votes ||= { yes: [], no: [] });
+  if (r.mod === 'pending' && m.mode === 'hybrid' && v.yes.length >= m.autoVerifyN) { r.mod = 'verified'; r.modBy = 'auto'; r.modAt = new Date().toISOString(); sysAudit('mod-auto', 'reports', r.id, `ยืนยันอัตโนมัติ: ${v.yes.length} อุปกรณ์ยืนยัน`); }
+  const lastYes = v.yes.reduce((a, x) => (x.at > a ? x.at : a), '');
+  const wasCleared = !!r.cleared; r.cleared = v.no.filter((x) => x.at > lastYes).length >= m.clearN;
+  if (r.cleared && !wasCleared) sysAudit('mod-cleared', 'reports', r.id, `ประชาชนแจ้งไม่พบน้ำท่วมแล้ว ${v.no.length} ครั้ง`);
+}
+function addVote(r, req, kind) {
+  const ip = req.ip || '', dev = devOf(req) || 'ip:' + ip, now = new Date().toISOString(), v = (r.votes ||= { yes: [], no: [] }), all = [...v.yes, ...v.no];
+  if (r.src?.dev === dev || all.some((x) => x.d === dev)) return false;
+  if (M().distinctIp && (r.src?.ip === ip || all.some((x) => x.ip === ip))) return false;
+  v[kind].push({ d: dev, ip, at: now });
+  if (kind === 'yes') { r.confirms = (r.confirms || 1) + 1; r.lastConfirmedAt = now; }
+  evaluate(r); return true;
+}
+function afterMod(coll, r) {
+  if (coll === 'reports') broadcast('report', isPublic(r) ? publicReport(r) : { id: r.id, gone: true }); else broadcast('lostfound', { id: r.id });
+  broadcast('staff:update', { coll, item: r }, true); broadcast('staff:mod', modCounts(), true);
+}
 app.get('/api/health', (req, res) => res.json({ ok: true, storage: store.kind, time: new Date().toISOString() }));
-app.get('/api/config', (req, res) => res.json({ city: 'เมืองพัทยา', province: 'ชลบุรี', center: CENTER, levels: LEVELS(), kinds: KINDS(), statusNames: STATUS_TEXT(), contacts: db.contacts, texts: textsFor(L()), lang: L(), langs: LANGS, turnstileSiteKey: TURNSTILE?.site || null, antispam: { minFillSec: db.antispam.on ? db.antispam.minFillSec : 0 }, settings: db.settings, cctv: visible(db.cctv), links: visible(db.links) }));
+app.get('/api/config', (req, res) => res.json({ city: 'เมืองพัทยา', province: 'ชลบุรี', center: CENTER, levels: LEVELS(), kinds: KINDS(), statusNames: STATUS_TEXT(), contacts: db.contacts, moderation: { mode: M().mode }, texts: textsFor(L()), lang: L(), langs: LANGS, turnstileSiteKey: TURNSTILE?.site || null, antispam: { minFillSec: db.antispam.on ? db.antispam.minFillSec : 0 }, settings: db.settings, cctv: visible(db.cctv), links: visible(db.links) }));
 app.get('/api/forecast', wrap(async (req, res) => res.json(await forecast())));
 app.get('/api/water', wrap(async (req, res) => res.json(await waterLevels())));
 app.get('/api/rain', wrap(async (req, res) => res.json(await rainStations())));
@@ -238,16 +286,26 @@ app.get('/api/events', (req, res) => {
 });
 
 // water reports (public)
-app.get('/api/reports', (req, res) => { const since = Date.now() - (num(req.query.hours) || 48) * 3600e3; res.json(db.reports.filter((r) => r.status !== 'hidden' && Date.parse(r.createdAt) > since).map(publicReport).reverse()); });
+app.get('/api/reports', (req, res) => { const since = Date.now() - (num(req.query.hours) || 48) * 3600e3; res.json(db.reports.filter((r) => isPublic(r) && Date.parse(r.createdAt) > since).map(publicReport).reverse()); });
 app.post('/api/reports', guard('reports'), wrap(async (req, res) => {
   const b = req.body || {}; const lat = num(b.lat), lng = num(b.lng);
   if (!LEVEL_CM[b.level]) return res.status(400).json({ error: S('err.level', 'เลือกระดับน้ำ') });
   if (lat == null || !inPattaya(lat, lng)) return res.status(400).json({ error: S('err.outside', 'ตำแหน่งต้องอยู่ในพื้นที่พัทยา/บางละมุง') });
-  const dup = findDup('reports', (x) => x.status !== 'hidden' && x.level === b.level && dist(x.lat, x.lng, lat, lng) <= db.antispam.dedupeMeters);
-  if (dup) { confirmDup(dup); broadcast('report', publicReport(dup)); return res.json({ ok: true, id: dup.id, merged: true, confirms: dup.confirms }); }
-  const a = area(b.areaId);
-  const r = { id: newId('R'), areaId: a?.id || null, areaName: a?.name || clean(b.areaName, 80), level: b.level, lat, lng, note: clean(b.note, 300), photo: await savePhoto(b.photo), status: 'new', createdAt: new Date().toISOString() };
-  db.reports.push(r); save(); broadcast('report', publicReport(r)); broadcast('staff:report', r, true); res.json({ ok: true, id: r.id });
+  const dup = findDup('reports', (x) => isPublic(x) && x.level === b.level && dist(x.lat, x.lng, lat, lng) <= db.antispam.dedupeMeters);
+  if (dup) { if (addVote(dup, req, 'yes')) asStats.merged++; save(); afterMod('reports', dup); return res.json({ ok: true, id: dup.id, merged: true, confirms: dup.confirms, mod: dup.mod }); }
+  const a = area(b.areaId), note = clean(b.note, 300), areaName = a?.name || clean(b.areaName, 80);
+  const r = { id: newId('R'), areaId: a?.id || null, areaName, level: b.level, lat, lng, note, photo: await savePhoto(b.photo), status: 'new', ...initialMod(note + ' ' + areaName, req), src: { ip: req.ip || '', dev: devOf(req) }, votes: { yes: [], no: [] }, createdAt: new Date().toISOString() };
+  db.reports.push(r); if (r.mod === 'held') sysAudit('mod-held', 'reports', r.id, (r.modReasons || []).join(', '));
+  save(); broadcast('report', isPublic(r) ? publicReport(r) : { id: r.id, gone: true }); broadcast('staff:report', r, true); broadcast('staff:mod', modCounts(), true); res.json({ ok: true, id: r.id, mod: r.mod, public: isPublic(r) });
+}));
+app.post('/api/reports/:id/vote', wrap(async (req, res) => {
+  const ip = req.ip || '', dev = devOf(req), lim = M().voteLimit || MOD_DEFAULT.voteLimit;
+  if (ipBlocked(ip)) { asStats.blocked++; return res.status(403).json({ error: S('err.blocked', 'ไม่สามารถส่งข้อมูลจากเครือข่ายนี้ได้ กรุณาโทร 1669 / 1784 / 1337') }); }
+  if (lim.n > 0) { const now = Date.now(), win = lim.min * 60e3, keys = ['vote:ip:' + ip, ...(dev ? ['vote:dev:' + dev] : [])]; const arrs = keys.map((k) => (asHits.get(k) || []).filter((t) => now - t < win));
+    if (arrs.some((a) => a.length >= lim.n)) { asStats.rate++; return res.status(429).json({ error: S('err.ratelimit', 'ส่งถี่เกินไป ลองใหม่ในอีกสักครู่') }); } keys.forEach((k, i) => { arrs[i].push(now); asHits.set(k, arrs[i]); }); }
+  const r = db.reports.find((x) => x.id === req.params.id); if (!r || !isPublic(r)) return res.status(404).json({ error: S('err.notfound', 'ไม่พบรายงานนี้') });
+  if (!addVote(r, req, req.body?.v === 'no' ? 'no' : 'yes')) return res.status(409).json({ error: S('err.voted', 'อุปกรณ์/เครือข่ายนี้ยืนยันรายงานนี้ไปแล้ว') });
+  save(); afterMod('reports', r); res.json({ ok: true, item: publicReport(r) });
 }));
 
 // help requests (food/supplies, rescue, medical)
@@ -282,13 +340,15 @@ app.post('/api/missing', guard('missing'), wrap(async (req, res) => {
   const r = { id: newId('M'), personName: clean(b.personName, 80), age: clean(b.age, 10), lastSeen: clean(b.lastSeen, 300), description: clean(b.description, 500), reporterName: clean(b.reporterName, 80), reporterPhone: clean(b.reporterPhone, 20), photo: await savePhoto(b.photo), status: 'searching', createdAt: new Date().toISOString() };
   db.missing.push(r); save(); broadcast('staff:missing', r, true); res.json({ ok: true, id: r.id });
 }));
-app.get('/api/lostfound', (req, res) => res.json(db.lostfound.filter((x) => x.status !== 'hidden').map(({ phone, ...x }) => ({ ...x, phoneMasked: 'xxx-xxx-' + last4(phone) })).reverse()));
+app.get('/api/lostfound', (req, res) => res.json(db.lostfound.filter(isPublic).map(({ phone, src, modReasons, votes, modBy, ...x }) => ({ ...x, phoneMasked: 'xxx-xxx-' + last4(phone) })).reverse()));
 app.post('/api/lostfound', guard('lostfound'), wrap(async (req, res) => {
   const b = req.body || {}; if (!clean(b.title) || last4(b.phone).length < 4) return res.status(400).json({ error: S('err.lf', 'กรอกหัวข้อและเบอร์ติดต่อ') });
-  const ty = b.type === 'found' ? 'found' : 'lost', dup = findDup('lostfound', (x) => x.type === ty && x.title.toLowerCase() === clean(b.title, 100).toLowerCase() && last4(x.phone) === last4(b.phone));
+  const ty = b.type === 'found' ? 'found' : 'lost', dup = findDup('lostfound', (x) => x.type === ty && x.title.toLowerCase() === clean(b.title, 100).toLowerCase() && last4(x.phone) === last4(b.phone) && !['held', 'rejected'].includes(x.mod));
   if (dup) { confirmDup(dup); return res.json({ ok: true, id: dup.id, merged: true, confirms: dup.confirms }); }
-  const r = { id: newId('L'), type: b.type === 'found' ? 'found' : 'lost', category: clean(b.category, 30), title: clean(b.title, 100), detail: clean(b.detail, 500), place: clean(b.place, 120), phone: clean(b.phone, 20), photo: await savePhoto(b.photo), status: 'open', createdAt: new Date().toISOString() };
-  db.lostfound.push(r); save(); broadcast('lostfound', { id: r.id }); broadcast('staff:lostfound', r, true); res.json({ ok: true, id: r.id });
+  const r = { id: newId('L'), type: b.type === 'found' ? 'found' : 'lost', category: clean(b.category, 30), title: clean(b.title, 100), detail: clean(b.detail, 500), place: clean(b.place, 120), phone: clean(b.phone, 20), photo: await savePhoto(b.photo), status: 'open', src: { ip: req.ip || '', dev: devOf(req) }, createdAt: new Date().toISOString() };
+  Object.assign(r, initialMod([r.title, r.detail, r.place, r.category].join(' '), req));
+  db.lostfound.push(r); if (r.mod === 'held') sysAudit('mod-held', 'lostfound', r.id, (r.modReasons || []).join(', '));
+  save(); broadcast('lostfound', { id: r.id }); broadcast('staff:lostfound', r, true); broadcast('staff:mod', modCounts(), true); res.json({ ok: true, id: r.id, mod: r.mod, public: isPublic(r) });
 }));
 
 // ---------- login / users ----------
@@ -341,6 +401,7 @@ function afterChange(c, item) {
 function setStatus(req, c, r, status, note) {
   const ST = STATUS_TEXT(); if (!COLLS[c].statuses.includes(status)) return false;
   r.status = status; if (c === 'requests') r.statusText = ST[status];
+  if (MOD_COLLS.includes(c) && status === 'verified' && r.mod !== 'verified') { r.mod = 'verified'; r.modBy = req.staff?.n; r.modAt = new Date().toISOString(); }
   if (r.history) r.history.push({ at: new Date().toISOString(), s: status, by: req.staff.n, note: clean(note, 200) }); return true;
 }
 app.patch('/api/staff/:coll/:id', staff, (req, res) => {
@@ -493,10 +554,44 @@ app.put('/api/admin/settings', admin, (req, res) => {
   if (b.reset) db.settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
   audit(req, 'settings', 'settings', null, Object.keys(b).join(', ')); save(); broadcast('cms', { coll: 'settings' }); res.json({ ok: true, settings: db.settings });
 });
+// ---------- moderation queue & settings ----------
+const modItem = (coll, x) => ({ coll, ...x, yes: x.votes?.yes.length || 0, no: x.votes?.no.length || 0 });
+app.get('/api/admin/moderation', staff, (req, res) => {
+  const items = MOD_COLLS.flatMap((k) => db[k].filter((x) => x.mod === 'pending' || x.mod === 'held').map((x) => modItem(k, x))).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  const recent = MOD_COLLS.flatMap((k) => db[k].filter((x) => x.mod === 'rejected' || (x.mod === 'verified' && x.modAt)).map((x) => modItem(k, x))).sort((a, b) => ((a.modAt || '') < (b.modAt || '') ? 1 : -1)).slice(0, 30);
+  res.json({ mode: M().mode, settings: M(), counts: modCounts(), items, recent });
+});
+app.post('/api/admin/moderation/action', staff, (req, res) => {
+  const { items = [], action } = req.body || {}; const to = { approve: 'verified', reject: 'rejected', hold: 'held' }[action];
+  if (!to) return res.status(400).json({ error: 'action ไม่ถูกต้อง' }); let n = 0;
+  for (const it of (Array.isArray(items) ? items : []).slice(0, 500)) { if (!MOD_COLLS.includes(it?.coll)) continue; const r = db[it.coll].find((x) => x.id === it.id); if (!r || r.mod === to) continue;
+    const from = r.mod; r.mod = to; r.modBy = req.staff.n; r.modAt = new Date().toISOString(); if (to === 'verified' && it.coll === 'reports' && r.status === 'new') r.status = 'verified';
+    audit(req, 'mod-' + action, it.coll, r.id, `${from} → ${to}`); afterMod(it.coll, r); n++; }
+  save(); res.json({ ok: true, n, counts: modCounts() });
+});
+app.get('/api/admin/moderation/settings', admin, (req, res) => res.json({ settings: M(), defaults: MOD_DEFAULT }));
+app.put('/api/admin/moderation/settings', admin, (req, res) => {
+  const b = req.body || {}, m = M(), ch = [], old = m.mode; const n = (x, lo, hi, d) => { x = Number(x); return Number.isFinite(x) ? Math.round(Math.min(hi, Math.max(lo, x))) : d; };
+  if (b.reset) { db.moderation = JSON.parse(JSON.stringify(MOD_DEFAULT)); ch.push('reset'); }
+  else {
+    if (['hybrid', 'approve', 'off'].includes(b.mode) && b.mode !== m.mode) { m.mode = b.mode; ch.push(`โหมด ${old} → ${b.mode}`); }
+    for (const [k, lo, hi] of [['autoVerifyN', 1, 50], ['clearN', 1, 50]]) if (k in b) { const v = n(b[k], lo, hi, m[k]); if (v !== m[k]) { m[k] = v; ch.push(`${k}=${v}`); } }
+    for (const k of ['distinctIp', 'holdLinks', 'holdPhones']) if (k in b && !!b[k] !== m[k]) { m[k] = !!b[k]; ch.push(`${k}=${m[k]}`); }
+    if (b.voteLimit) { m.voteLimit = { n: n(b.voteLimit.n, 0, 1000, m.voteLimit.n), min: n(b.voteLimit.min, 1, 1440, m.voteLimit.min) }; }
+    for (const k of ['words', 'flagged']) if (Array.isArray(b[k])) { const v = [...new Set(b[k].map((x) => String(x).trim().slice(0, 64)).filter(Boolean))].slice(0, 2000); if (JSON.stringify(v) !== JSON.stringify(m[k])) { m[k] = v; ch.push(`${k} (${v.length})`); } }
+  }
+  const mm = M(); let auto = 0;
+  if (mm.mode === 'off' && old !== 'off') for (const k of MOD_COLLS) for (const x of db[k]) if (x.mod === 'pending') { x.mod = 'verified'; x.modBy = 'mode-off'; x.modAt = new Date().toISOString(); auto++; }
+  if (mm.mode === 'hybrid') for (const x of db.reports) if (x.mod === 'pending') evaluate(x);
+  if (auto) ch.push(`ยืนยันรายการรอตรวจ ${auto} รายการ`);
+  audit(req, mm.mode !== old ? 'mod-mode' : 'mod-settings', 'moderation', null, ch.join(', ') || 'ไม่มีการเปลี่ยนแปลง'); save();
+  broadcast('cms', { coll: 'moderation', mode: mm.mode }); broadcast('report', { mode: mm.mode }); broadcast('lostfound', {}); broadcast('staff:mod', modCounts(), true);
+  res.json({ ok: true, settings: mm });
+});
 // ---------- avoidance routing ----------
 function floodZones() {
   const since = Date.now() - 24 * 3600e3, z = [];
-  for (const r of db.reports) if (r.status !== 'hidden' && Date.parse(r.createdAt) > since && LEVEL_CM[r.level] >= 30) z.push({ lat: r.lat, lng: r.lng, rM: LEVEL_CM[r.level] >= 75 ? 250 : 150, label: S('map.zonereport', 'รายงาน') + ' ' + (LEVELS()[r.level] || ''), id: r.id });
+  for (const r of db.reports) if (inRoute(r) && Date.parse(r.createdAt) > since && LEVEL_CM[r.level] >= 30) z.push({ lat: r.lat, lng: r.lng, rM: LEVEL_CM[r.level] >= 75 ? 250 : 150, label: S('map.zonereport', 'รายงาน') + ' ' + (LEVELS()[r.level] || '') + (r.mod === 'pending' ? ' (' + S('mod.pending', 'รอตรวจสอบ') + ')' : ''), id: r.id });
   for (const w of db.roads) if (w.status !== 'hidden' && w.type === 'closed') for (let i = 0; i < w.points.length; i++) {
     z.push({ lat: w.points[i][0], lng: w.points[i][1], rM: 80, label: S('map.closed', 'ถนนปิด') + ': ' + w.title, id: w.id });
     if (i) { const a = w.points[i - 1], b = w.points[i]; const n = Math.ceil(km(a[0], a[1], b[0], b[1]) * 1000 / 100); for (let k = 1; k < n; k++) z.push({ lat: a[0] + (b[0] - a[0]) * k / n, lng: a[1] + (b[1] - a[1]) * k / n, rM: 80, label: S('map.closed', 'ถนนปิด') + ': ' + w.title, id: w.id }); }

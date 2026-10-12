@@ -335,4 +335,14 @@
 "err.captcha":"请完成人机验证后重试",
 "msg.merged":"此地点已有人报告 — 已计为一次额外确认",
 "updates.confirmed":"确认人数",
-"updates.people":"人"}
+"updates.people":"人",
+"mod.pending":"待核实",
+"mod.verified":"✔ 已核实",
+"mod.cleared":"可能已退水",
+"mod.vote.yes":"👍 确认属实",
+"mod.vote.no":"🌤️ 已不再积水",
+"mod.vote.done":"谢谢——已记录您的确认",
+"mod.msg.held":"您的报告将在工作人员审核后公开显示",
+"mod.msg.pending":"已在地图上以“待核实”显示——其他人确认或工作人员审核后将被核实",
+"err.voted":"此设备/网络已对该报告投过票",
+"err.notfound":"未找到该报告"}

@@ -335,4 +335,14 @@
 "err.captcha":"Please confirm you are not a bot (captcha) and try again",
 "msg.merged":"This spot was already reported — counted as an extra confirmation",
 "updates.confirmed":"confirmed by",
-"updates.people":"people"}
+"updates.people":"people",
+"mod.pending":"Unverified",
+"mod.verified":"✔ Verified",
+"mod.cleared":"Possibly cleared",
+"mod.vote.yes":"👍 Confirm it's true",
+"mod.vote.no":"🌤️ No longer flooded",
+"mod.vote.done":"Thanks — your confirmation was recorded",
+"mod.msg.held":"Your report will be shown publicly after staff review",
+"mod.msg.pending":"Shown on the map as \"Unverified\" — it will be verified when others confirm it or staff review it",
+"err.voted":"This device/network has already voted on this report",
+"err.notfound":"Report not found"}
