@@ -108,6 +108,10 @@ const auth = (min = 'staff') => (req, res, next) => {
   req.user = u; req.staff = { n: u.name || u.username }; next();
 };
 const staff = auth('staff');
+const lvl = (req) => RANK[req.user?.role] || 0;
+// staff may not hide/reject content via status; that is moderation (admin+)
+const statusOk = (req, s) => lvl(req) >= RANK.admin || !['hidden'].includes(s);
+const NOPE = (res, msg) => res.status(403).json({ error: msg || 'สิทธิ์ไม่พอสำหรับการทำรายการนี้' });
 const pubUser = (u) => ({ id: u.id, username: u.username, name: u.name, role: u.role, roleName: ROLE_NAME[u.role], active: u.active, createdAt: u.createdAt, lastLogin: u.lastLogin });
 function audit(req, action, coll, id, detail) { db.audit.push({ at: new Date().toISOString(), by: req.user ? (req.user.name || req.user.username) : 'ระบบ', user: req.user?.username, action, coll, id, detail: detail ? String(detail).slice(0, 300) : undefined }); if (db.audit.length > 6000) db.audit.splice(0, 1000); }
 
@@ -465,6 +469,8 @@ function setStatus(req, c, r, status, note) {
 app.patch('/api/staff/:coll/:id', staff, (req, res) => {
   const c = req.params.coll, C = COLLS[c]; if (!C || !C.triage) return res.status(404).end(); const r = C.arr().find((x) => x.id === req.params.id); if (!r) return res.status(404).json({ error: 'ไม่พบ' });
   const b = req.body || {};
+  if (lvl(req) < RANK.superadmin && (b.priority != null || b.assignee != null)) return NOPE(res, 'แก้ได้เฉพาะสถานะงาน');
+  if (b.status && !statusOk(req, b.status)) return NOPE(res, 'ซ่อนรายการได้เฉพาะผู้ดูแล');
   if (b.status) setStatus(req, c, r, b.status, b.note); else if (r.history && b.note) r.history.push({ at: new Date().toISOString(), s: r.status, by: req.staff.n, note: clean(b.note, 200) });
   if (b.priority) r.priority = clean(b.priority, 10); if (b.assignee != null) r.assignee = clean(b.assignee, 80);
   audit(req, 'update', c, r.id, `สถานะ=${r.status}${b.assignee != null ? ' ทีม=' + r.assignee : ''}`); save(); afterChange(c, r);
@@ -475,11 +481,11 @@ async function removeItem(req, c, id) {
   const [r] = a.splice(i, 1); if (r.photo) await store.delPhoto(r.photo).catch(() => {});
   audit(req, 'delete', c, r.id, r.title || r.name || r.personName || r.areaName || ''); broadcast('deleted', { coll: c, id: r.id }); return true;
 }
-app.delete('/api/staff/:coll/:id', admin, wrap(async (req, res) => {
+app.delete('/api/staff/:coll/:id', superadmin, wrap(async (req, res) => {
   if (!COLLS[req.params.coll]) return res.status(404).end(); if (!(await removeItem(req, req.params.coll, req.params.id))) return res.status(404).json({ error: 'ไม่พบ' });
   save(); afterChange(req.params.coll); res.json({ ok: true });
 }));
-app.put('/api/staff/contacts', admin, (req, res) => {
+app.put('/api/staff/contacts', superadmin, (req, res) => {
   const b = req.body || {}; const fix = (p) => { const s = clean(p, 30); return s || null; };
   if (Array.isArray(b.areas)) db.contacts.areas = b.areas.map((a, i) => ({ id: clean(a.id, 30) || 'area' + i, name: clean(a.name, 80), org: clean(a.org, 80), coordinator: clean(a.coordinator, 120), phone: fix(a.phone), verified: !!a.verified, source: clean(a.source, 200), served: !!a.served, lat: num(a.lat), lng: num(a.lng) }));
   for (const k of ['health', 'emergency']) if (Array.isArray(b[k])) db.contacts[k] = b[k].map((x) => ({ id: clean(x.id, 30) || newId(k === 'health' ? 'H' : 'E'), name: clean(x.name, 120), phone: fix(x.phone), note: clean(x.note, 200), verified: !!x.verified, source: clean(x.source, 200) }));
@@ -529,7 +535,7 @@ function coerce(f, v) {
 app.get('/api/admin/schema', staff, (req, res) => res.json({ me: pubUser(req.user), roles: ROLE_NAME, levels: LEVELS(), kinds: KINDS(), statusNames: STATUS_TEXT(), storage: store.kind,
   colls: Object.fromEntries(Object.entries(COLLS).map(([k, c]) => [k, { label: c.label, fields: c.fields, statuses: c.statuses || [], typeField: c.typeField, create: !!c.create, triage: !!c.triage }])) }));
 app.get('/api/admin/c/:coll', staff, (req, res) => { const C = COLLS[req.params.coll]; if (!C) return res.status(404).end(); if (!C.triage && RANK[req.user.role] < 2) return res.status(403).json({ error: 'สิทธิ์ไม่พอ' }); res.json([...C.arr()].reverse()); });
-app.post('/api/admin/c/:coll', admin, (req, res) => {
+app.post('/api/admin/c/:coll', superadmin, (req, res) => {
   const c = req.params.coll, C = COLLS[c]; if (!C || !C.create) return res.status(404).end(); const b = req.body || {}; const r = {};
   for (const f of C.fields) r[f.k] = coerce(f, b[f.k]);
   if (c === 'areas') { r.id = String(r.id || '').toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'area' + (++db.seq); if (db.contacts.areas.some((a) => a.id === r.id)) return res.status(400).json({ error: 'รหัสพื้นที่ซ้ำ' }); } else r.id = newId(C.prefix);
@@ -537,19 +543,25 @@ app.post('/api/admin/c/:coll', admin, (req, res) => {
   if (!r.name && !r.title) return res.status(400).json({ error: 'กรอกชื่อ' });
   C.arr().push(r); audit(req, 'create', c, r.id, r.name || r.title); save(); afterChange(c, r); res.json({ ok: true, item: r });
 });
-app.put('/api/admin/c/:coll/:id', admin, (req, res) => {
+app.put('/api/admin/c/:coll/:id', staff, (req, res) => {
   const c = req.params.coll, C = COLLS[c]; if (!C) return res.status(404).end(); const r = C.arr().find((x) => x.id === req.params.id); if (!r) return res.status(404).json({ error: 'ไม่พบ' });
   const b = req.body || {}, ch = [];
+  if (lvl(req) < RANK.superadmin) { // staff/admin: status (+note) only, on triage collections
+    if (!C.triage) return NOPE(res, 'แก้ไขข้อมูลนี้ได้เฉพาะผู้ดูแลสูงสุด');
+    const changed = C.fields.filter((f) => f.k in b && !(c === 'areas' && f.k === 'id') && JSON.stringify(coerce(f, b[f.k])) !== JSON.stringify(r[f.k]));
+    if (changed.length) return NOPE(res, 'แก้ได้เฉพาะสถานะ (ช่องอื่นแก้ได้เฉพาะผู้ดูแลสูงสุด): ' + changed.map((f) => f.label).join(', '));
+    if (b.status && b.status !== r.status && !statusOk(req, b.status)) return NOPE(res, 'ซ่อนรายการได้เฉพาะผู้ดูแล');
+  }
   for (const f of C.fields) if (f.k in b && !(c === 'areas' && f.k === 'id')) { const v = coerce(f, b[f.k]); if (JSON.stringify(v) !== JSON.stringify(r[f.k])) { r[f.k] = v; ch.push(f.label); } }
-  if (b.status && b.status !== r.status && setStatus(req, c, r, b.status, b.note)) ch.push('สถานะ=' + b.status);
+  if (b.status && b.status !== r.status && setStatus(req, c, r, b.status, b.stnote ?? (C.fields.some((f) => f.k === 'note') ? '' : b.note))) ch.push('สถานะ=' + b.status);
   if (c === 'requests' && 'areaName' in b) { const a = db.contacts.areas.find((x) => x.name === r.areaName); if (a) r.areaId = a.id; }
   audit(req, 'update', c, r.id, ch.join(', ')); save(); afterChange(c, r); res.json({ ok: true, item: r });
 });
-app.delete('/api/admin/c/:coll/:id', admin, wrap(async (req, res) => { if (!COLLS[req.params.coll]) return res.status(404).end(); if (!(await removeItem(req, req.params.coll, req.params.id))) return res.status(404).json({ error: 'ไม่พบ' }); save(); afterChange(req.params.coll); res.json({ ok: true }); }));
+app.delete('/api/admin/c/:coll/:id', superadmin, wrap(async (req, res) => { if (!COLLS[req.params.coll]) return res.status(404).end(); if (!(await removeItem(req, req.params.coll, req.params.id))) return res.status(404).json({ error: 'ไม่พบ' }); save(); afterChange(req.params.coll); res.json({ ok: true }); }));
 app.post('/api/admin/c/:coll/bulk', staff, wrap(async (req, res) => {
   const c = req.params.coll, C = COLLS[c]; if (!C) return res.status(404).end(); const { ids = [], action, status } = req.body || {}; let n = 0;
-  if (action === 'delete') { if (RANK[req.user.role] < 2) return res.status(403).json({ error: 'สิทธิ์ไม่พอ (ต้องเป็นผู้ดูแล)' }); for (const id of ids) if (await removeItem(req, c, id)) n++; }
-  else if (action === 'status') { if (!C.triage && RANK[req.user.role] < 2) return res.status(403).json({ error: 'สิทธิ์ไม่พอ' }); for (const id of ids) { const r = C.arr().find((x) => x.id === id); if (r && setStatus(req, c, r, status)) { n++; afterChange(c, r); } } audit(req, 'bulk-status', c, null, `${n} รายการ → ${status}`); }
+  if (action === 'delete') { if (lvl(req) < RANK.superadmin) return NOPE(res, 'ลบได้เฉพาะผู้ดูแลสูงสุด'); for (const id of ids) if (await removeItem(req, c, id)) n++; }
+  else if (action === 'status') { if (!C.triage && lvl(req) < RANK.superadmin) return NOPE(res); if (!statusOk(req, status)) return NOPE(res, 'ซ่อนรายการได้เฉพาะผู้ดูแล'); for (const id of ids) { const r = C.arr().find((x) => x.id === id); if (r && setStatus(req, c, r, status)) { n++; afterChange(c, r); } } audit(req, 'bulk-status', c, null, `${n} รายการ → ${status}`); }
   else return res.status(400).json({ error: 'action ไม่ถูกต้อง' });
   save(); afterChange(c); res.json({ ok: true, n });
 }));
@@ -617,7 +629,7 @@ function mergedCams(all) {
 app.get('/api/cctv/pattaya', wrap(async (req, res) => { const r = await pattayaCams(); if (!r.ok) return res.json({ ok: false, error: r.error, items: [], liveUrl: PTY_LIVE });
   res.json({ ok: true, fetchedAt: r.fetchedAt, stale: !!r.stale, liveUrl: PTY_LIVE, items: mergedCams(r).filter((c) => !c.hidden).map(({ hidden, ...c }) => c) }); }));
 app.get('/api/admin/cctv/pattaya', admin, wrap(async (req, res) => { const r = await pattayaCams(); res.json({ ok: !!r.ok, error: r.error, items: mergedCams(r) }); }));
-app.put('/api/admin/cctv/pattaya/:id', admin, (req, res) => {
+app.put('/api/admin/cctv/pattaya/:id', superadmin, (req, res) => {
   const b = req.body || {}, id = clean(req.params.id, 80); const o = db.cctvOverrides[id] || {};
   if ('hidden' in b) o.hidden = !!b.hidden; if ('featured' in b) o.featured = !!b.featured; if ('title' in b) o.title = clean(b.title, 120);
   if ('lat' in b) o.lat = num(b.lat); if ('lng' in b) o.lng = num(b.lng);
@@ -625,18 +637,18 @@ app.put('/api/admin/cctv/pattaya/:id', admin, (req, res) => {
 });
 
 // ---------- back-office: texts & settings ----------
-app.get('/api/admin/texts', admin, (req, res) => { const reg = require('./texts').build(); Object.assign(TEXTS, reg);
+app.get('/api/admin/texts', superadmin, (req, res) => { const reg = require('./texts').build(); Object.assign(TEXTS, reg);
   res.json(Object.values(TEXTS).map((t) => ({ key: t.key, group: t.group, g: t.g, default: t.d, value: db.texts[t.key] ?? null,
     i18n: { en: { default: TR.en[t.key] ?? '', value: db.i18n.en[t.key] ?? null }, zh: { default: TR.zh[t.key] ?? '', value: db.i18n.zh[t.key] ?? null } } }))); });
-app.put('/api/admin/texts', admin, (req, res) => {
+app.put('/api/admin/texts', superadmin, (req, res) => {
   const vals = req.body?.values || (req.body?.key ? { [req.body.key]: req.body.value } : {}); const ch = [];
   const lang = ['en', 'zh'].includes(req.body?.lang) ? req.body.lang : 'th', tgt = lang === 'th' ? db.texts : db.i18n[lang];
   for (const [k, v] of Object.entries(vals)) { if (!TEXTS[k]) continue; const s = String(v ?? '').slice(0, 2000); const def = lang === 'th' ? TEXTS[k].d : TR[lang][k]; if (s === '' || s === def) delete tgt[k]; else tgt[k] = s; ch.push(k); }
   audit(req, 'texts', 'texts', lang, ch.join(', ')); save(); broadcast('cms', { coll: 'texts' }); res.json({ ok: true, n: ch.length });
 });
-app.delete('/api/admin/texts/:key', admin, (req, res) => { const lang = ['en', 'zh'].includes(req.query.lang) ? req.query.lang : 'th'; delete (lang === 'th' ? db.texts : db.i18n[lang])[req.params.key]; audit(req, 'text-reset', 'texts', req.params.key, lang); save(); broadcast('cms', { coll: 'texts' }); res.json({ ok: true }); });
-app.get('/api/admin/antispam', admin, (req, res) => res.json({ antispam: db.antispam, defaults: AS_DEFAULT, stats: asStats, turnstile: !!TURNSTILE, yourIp: req.ip }));
-app.put('/api/admin/antispam', admin, (req, res) => {
+app.delete('/api/admin/texts/:key', superadmin, (req, res) => { const lang = ['en', 'zh'].includes(req.query.lang) ? req.query.lang : 'th'; delete (lang === 'th' ? db.texts : db.i18n[lang])[req.params.key]; audit(req, 'text-reset', 'texts', req.params.key, lang); save(); broadcast('cms', { coll: 'texts' }); res.json({ ok: true }); });
+app.get('/api/admin/antispam', superadmin, (req, res) => res.json({ antispam: db.antispam, defaults: AS_DEFAULT, stats: asStats, turnstile: !!TURNSTILE, yourIp: req.ip }));
+app.put('/api/admin/antispam', superadmin, (req, res) => {
   const b = req.body || {}, A = db.antispam; if (b.reset) db.antispam = JSON.parse(JSON.stringify(AS_DEFAULT));
   else { const n = (x, lo, hi, d) => { x = Number(x); return Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : d; };
     if ('on' in b) A.on = !!b.on; if ('honeypot' in b) A.honeypot = !!b.honeypot; if ('dedupe' in b) A.dedupe = !!b.dedupe;
@@ -645,10 +657,10 @@ app.put('/api/admin/antispam', admin, (req, res) => {
     if (Array.isArray(b.blocked)) A.blocked = [...new Set(b.blocked.map((x) => String(x).trim().slice(0, 64)).filter(Boolean))].slice(0, 2000); }
   audit(req, 'antispam', 'antispam', null, JSON.stringify(db.antispam).slice(0, 300)); save(); res.json({ ok: true, antispam: db.antispam });
 });
-app.post('/api/admin/logo', admin, wrap(async (req, res) => { const u = await savePhoto(req.body?.image); if (!u) return res.status(400).json({ error: 'เลือกรูปโลโก้' });
+app.post('/api/admin/logo', superadmin, wrap(async (req, res) => { const u = await savePhoto(req.body?.image); if (!u) return res.status(400).json({ error: 'เลือกรูปโลโก้' });
   db.settings.logoUrl = u; audit(req, 'logo', 'settings', null, u); save(); broadcast('cms', { coll: 'settings' }); res.json({ ok: true, logoUrl: u }); }));
-app.get('/api/admin/settings', admin, (req, res) => res.json({ settings: db.settings, defaults: DEFAULT_SETTINGS }));
-app.put('/api/admin/settings', admin, (req, res) => {
+app.get('/api/admin/settings', superadmin, (req, res) => res.json({ settings: db.settings, defaults: DEFAULT_SETTINGS }));
+app.put('/api/admin/settings', superadmin, (req, res) => {
   const b = req.body || {}, s = db.settings;
   if (b.logo != null) s.logo = clean(b.logo, 8); if (b.logoUrl != null) s.logoUrl = /^(https?:\/\/|\/)/.test(b.logoUrl) ? clean(b.logoUrl, 400) : '';
   for (const k of ['primary', 'header', 'bg']) if (b[k]) s[k] = color(b[k], s[k]);
@@ -657,8 +669,8 @@ app.put('/api/admin/settings', admin, (req, res) => {
   if (b.reset) db.settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
   audit(req, 'settings', 'settings', null, Object.keys(b).join(', ')); save(); broadcast('cms', { coll: 'settings' }); res.json({ ok: true, settings: db.settings });
 });
-app.get('/api/admin/geofence', admin, (req, res) => res.json({ geofence: db.geofence, defaults: GEO_DEFAULT, source: BOUNDARY.properties }));
-app.put('/api/admin/geofence', admin, (req, res) => { const b = req.body || {}, g = db.geofence, old = JSON.stringify(g);
+app.get('/api/admin/geofence', superadmin, (req, res) => res.json({ geofence: db.geofence, defaults: GEO_DEFAULT, source: BOUNDARY.properties }));
+app.put('/api/admin/geofence', superadmin, (req, res) => { const b = req.body || {}, g = db.geofence, old = JSON.stringify(g);
   if ('on' in b) g.on = !!b.on; if ('bufferM' in b) { const v = Number(b.bufferM); if (Number.isFinite(v)) g.bufferM = Math.round(Math.min(10000, Math.max(0, v))); }
   audit(req, 'geofence', 'geofence', null, `${old} → ${JSON.stringify(g)}`); save(); broadcast('cms', { coll: 'geofence' }); res.json({ ok: true, geofence: g }); });
 // ---------- moderation queue & settings ----------
@@ -670,14 +682,14 @@ app.get('/api/admin/moderation', staff, (req, res) => {
 });
 app.post('/api/admin/moderation/action', staff, (req, res) => {
   const { items = [], action } = req.body || {}; const to = { approve: 'verified', reject: 'rejected', hold: 'held' }[action];
-  if (!to) return res.status(400).json({ error: 'action ไม่ถูกต้อง' }); let n = 0;
+  if (!to) return res.status(400).json({ error: 'action ไม่ถูกต้อง' }); if (action !== 'approve' && lvl(req) < RANK.admin) return NOPE(res, 'เจ้าหน้าที่ยืนยันได้อย่างเดียว (พัก/ซ่อน/ปฏิเสธ ต้องเป็นผู้ดูแล)'); let n = 0;
   for (const it of (Array.isArray(items) ? items : []).slice(0, 500)) { if (!MOD_COLLS.includes(it?.coll)) continue; const r = db[it.coll].find((x) => x.id === it.id); if (!r || r.mod === to) continue;
     const from = r.mod; r.mod = to; r.modBy = req.staff.n; r.modAt = new Date().toISOString(); if (to === 'verified' && it.coll === 'reports' && r.status === 'new') r.status = 'verified';
     audit(req, 'mod-' + action, it.coll, r.id, `${from} → ${to}`); afterMod(it.coll, r); n++; }
   save(); res.json({ ok: true, n, counts: modCounts() });
 });
 app.get('/api/admin/moderation/settings', admin, (req, res) => res.json({ settings: M(), defaults: MOD_DEFAULT }));
-app.put('/api/admin/moderation/settings', admin, (req, res) => {
+app.put('/api/admin/moderation/settings', superadmin, (req, res) => {
   const b = req.body || {}, m = M(), ch = [], old = m.mode; const n = (x, lo, hi, d) => { x = Number(x); return Number.isFinite(x) ? Math.round(Math.min(hi, Math.max(lo, x))) : d; };
   if (b.reset) { db.moderation = JSON.parse(JSON.stringify(MOD_DEFAULT)); ch.push('reset'); }
   else {

@@ -28,7 +28,7 @@ const res=[]; const errs=[];
  await T('modal closes on backdrop click, not on inner click', async()=>{ await a.goto(B+'/admin#c/emergency'); await a.waitForSelector('#tb'); await a.click('#add'); await a.click('.modal h2'); if(!await a.locator('.modal').count()) throw new Error('closed on inner click'); await a.mouse.click(5,5); await a.waitForTimeout(200); if(await a.locator('.modal').count()) throw new Error('backdrop did not close'); });
  await T('triage coll: row checkbox + select-all + bulk status', async()=>{ await a.goto(B+'/admin#c/reports'); await a.waitForSelector('#tb tr'); await a.locator('#tb .rowsel').first().click(); if(!await a.locator('#tb .rowsel').first().isChecked()) throw new Error('row checkbox'); await a.click('#all'); const n=await a.locator('#cnt').innerText(); await a.click('#all'); return n; });
  await T('reports filters (search/status/time selects)', async()=>{ await a.selectOption('#fs',{index:1}); await a.selectOption('#fd',{index:1}); await a.fill('#q','R-'); await a.waitForTimeout(200); await a.selectOption('#fs',{index:0}); return await a.locator('#cnt').innerText(); });
- await T('edit water report (status select + note) after visiting users page (no handler leak)', async()=>{ await a.goto(B+'/admin#users'); await a.waitForSelector('tbody tr'); await a.goto(B+'/admin#mod'); await a.waitForTimeout(800); await a.goto(B+'/admin#c/reports'); await a.waitForSelector('#tb .ed'); await a.locator('#tb .rowsel').first().click(); await a.locator('#tb .ed').first().click(); await a.waitForSelector('.modal'); await a.fill('.modal [data-f=note]','SMOKE note'); await a.click('.modal #sv'); await a.waitForSelector('.modal',{state:'detached'}); });
+ await T('edit water report (status select + note) after visiting users page (no handler leak)', async()=>{ await a.goto(B+'/admin#users'); await a.waitForSelector('tbody tr'); await a.goto(B+'/admin#mod'); await a.waitForTimeout(800); await a.goto(B+'/admin#c/reports'); await a.waitForSelector('#tb .ed'); await a.locator('#tb .rowsel').first().click(); await a.locator('#tb .ed').first().click(); await a.waitForSelector('.modal'); await a.fill('.modal [data-f=stnote]','SMOKE note'); await a.click('.modal #sv'); await a.waitForSelector('.modal',{state:'detached'}); });
  await T('moderation: tick, approve, reject, hold, bulk', async()=>{ await a.goto(B+'/admin#mod'); await a.waitForTimeout(1000); const n=await a.locator('.mq').count(); if(!n) return 'queue empty'; await a.locator('.mq .rowsel').first().click(); if(!await a.locator('.mq .rowsel').first().isChecked()) throw new Error('queue checkbox'); await a.locator('.mq .rowsel').first().click();
    if(await a.locator('.mq [data-a=hold]').count()){ await a.locator('.mq [data-a=hold]').first().click(); await a.waitForTimeout(800); }
    await a.locator('.mq [data-a=approve]').first().click(); await a.waitForTimeout(800); if(await a.locator('.mq').count()){ await a.locator('.mq [data-a=reject]').first().click(); await a.waitForTimeout(800);} 
@@ -55,5 +55,69 @@ const res=[]; const errs=[];
  await TP('public: water report form (chips, GPS, note typing, submit)', async()=>{ await p.goto(B+'/#/report'); await p.waitForSelector('#lv .chip'); await p.click('#lv .chip[data-v=ankle]'); await p.click('[data-a=gps]'); await p.fill('#nt','SMOKE public report'); await p.waitForTimeout(3300); await p.click('#go'); await p.waitForSelector('h2.ok',{timeout:6000}); return await p.locator('h2.ok').innerText(); });
  await TP('public: help request form (area select, inputs, submit)', async()=>{ await p.goto(B+'/#/help?kind=food'); await p.waitForSelector('#ar'); const opt=await p.locator('#ar option:not([disabled])').nth(1).getAttribute('value'); await p.selectOption('#ar',opt); const ins=await p.locator('#app input:not([type=file]):not([type=checkbox]):not(#website), #app textarea').evaluateAll(es=>es.map(e=>e.id+':'+(e.placeholder||'')).slice(0,12)); 
    await p.fill('#nm','SMOKE ทดสอบระบบ'); await p.fill('#tl','0812345678'); await p.fill('#ad','ซอยทดสอบ'); await p.fill('#nt','SMOKE help'); await p.waitForTimeout(3300); await p.click('#go'); await p.waitForTimeout(2000); return (await p.locator('#app').innerText()).slice(0,120).replace(/\n/g,' '); });
+ // ---------- role permissions (403 expectations per role) ----------
+ const RU={staff:'role.staff',admin:'role.admin',superadmin:'role.super'}, RPW='rolepass123';
+ for (const [role,u] of Object.entries(RU)) { const r=await a.evaluate(async([u,role,p])=>{let x=await fetch('/api/admin/users',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:u,name:'Role '+role,role,password:p})});if(x.ok)return 'new';const L=await (await fetch('/api/admin/users')).json();const me=L.find(v=>v.username===u);x=await fetch('/api/admin/users/'+me.id,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({role,active:true,password:p})});return x.status;},[u,role,RPW]); }
+ const fx=await a.evaluate(async()=>{const g=async(u)=>(await fetch(u)).json(); const rq=await g('/api/admin/c/requests'), rp=await g('/api/admin/c/reports'), ar=await g('/api/admin/c/areas'); return {rid:rq[0].id, rname:rq[0].name, rep:rp[0].id, aid:ar[0].id, aname:ar[0].name};});
+ const PT=[[12.93,100.88],[12.931,100.882]];
+ // [label, method, url, body, expect{staff,admin,superadmin}]  (number = exact status, 'ok' = 2xx, 'n' = not 403)
+ const CK=(R)=>[
+  ['view requests','GET','/api/admin/c/requests',null,{staff:200,admin:200,superadmin:200}],
+  ['view stats','GET','/api/admin/stats',null,{staff:200,admin:200,superadmin:200}],
+  ['download CSV','GET','/api/admin/c/requests/export.csv',null,{staff:200,admin:200,superadmin:200}],
+  ['update job status (enroute)','PATCH','/api/staff/requests/'+fx.rid,{status:'enroute'},{staff:200,admin:200,superadmin:200}],
+  ['status via edit modal (PUT status only)','PUT','/api/admin/c/requests/'+fx.rid,{status:'resolved',name:fx.rname,stnote:'role '+R},{staff:200,admin:200,superadmin:200}],
+  ['assign team (non-status field)','PATCH','/api/staff/requests/'+fx.rid,{assignee:'X'},{staff:403,admin:403,superadmin:200}],
+  ['edit other field (PUT name)','PUT','/api/admin/c/requests/'+fx.rid,{name:fx.rname+' X'},{staff:403,admin:403,superadmin:200}],
+  ['hide report (status hidden)','PATCH','/api/staff/reports/'+fx.rep,{status:'hidden'},{staff:403,admin:200,superadmin:200}],
+  ['bulk status hidden','POST','/api/admin/c/reports/bulk',{action:'status',status:'hidden',ids:[]},{staff:403,admin:200,superadmin:200}],
+  ['bulk status new','POST','/api/admin/c/reports/bulk',{action:'status',status:'new',ids:[]},{staff:200,admin:200,superadmin:200}],
+  ['bulk delete','POST','/api/admin/c/reports/bulk',{action:'delete',ids:[]},{staff:403,admin:403,superadmin:200}],
+  ['DELETE /api/staff/:coll/:id','DELETE','/api/staff/requests/NOPE-1',null,{staff:403,admin:403,superadmin:404}],
+  ['DELETE /api/admin/c/:coll/:id','DELETE','/api/admin/c/areas/NOPE-1',null,{staff:403,admin:403,superadmin:404}],
+  ['moderation approve (verify)','POST','/api/admin/moderation/action',{action:'approve',items:[]},{staff:200,admin:200,superadmin:200}],
+  ['moderation hold','POST','/api/admin/moderation/action',{action:'hold',items:[]},{staff:403,admin:200,superadmin:200}],
+  ['moderation reject','POST','/api/admin/moderation/action',{action:'reject',items:[]},{staff:403,admin:200,superadmin:200}],
+  ['view reference data (areas)','GET','/api/admin/c/areas',null,{staff:403,admin:200,superadmin:200}],
+  ['edit collection (areas)','PUT','/api/admin/c/areas/'+fx.aid,{name:fx.aname},{staff:403,admin:403,superadmin:200}],
+  ['create collection item (links)','POST','/api/admin/c/links',{},{staff:403,admin:403,superadmin:400}],
+  ['PUT /api/staff/contacts','PUT','/api/staff/contacts',{},{staff:403,admin:403,superadmin:200}],
+  ['site texts','GET','/api/admin/texts',null,{staff:403,admin:403,superadmin:200}],
+  ['logo upload','POST','/api/admin/logo',{},{staff:403,admin:403,superadmin:400}],
+  ['settings','GET','/api/admin/settings',null,{staff:403,admin:403,superadmin:200}],
+  ['settings save','PUT','/api/admin/settings',{},{staff:403,admin:403,superadmin:'n'}],
+  ['antispam','GET','/api/admin/antispam',null,{staff:403,admin:403,superadmin:200}],
+  ['geofence save','PUT','/api/admin/geofence',{},{staff:403,admin:403,superadmin:'n'}],
+  ['moderation settings save','PUT','/api/admin/moderation/settings',{},{staff:403,admin:403,superadmin:'n'}],
+  ['Pattaya CCTV edit','PUT','/api/admin/cctv/pattaya/NOPE',{},{staff:403,admin:403,superadmin:'n'}],
+  ['users','GET','/api/admin/users',null,{staff:403,admin:403,superadmin:200}],
+  ['audit log','GET','/api/admin/audit',null,{staff:403,admin:200,superadmin:200}],
+  ['road approval queue','GET','/api/admin/roads/queue',null,{staff:403,admin:200,superadmin:200}],
+  ['submit road closure','POST','/api/staff/roads',{type:'closed',title:'ROLE '+R,points:PT},{staff:200,admin:200,superadmin:200}],
+  ['own password (wrong current)','POST','/api/admin/me/password',{current:'wrong',password:'abcdefgh9'},{staff:'n',admin:'n',superadmin:'n'}],
+ ];
+ const sh={};
+ for (const [role,u] of Object.entries(RU)) {
+  const c=await br.newContext({viewport:{width:1280,height:900}}); const pg=await c.newPage(); pg.on('pageerror',e=>errs.push(role+' pageerror: '+e.message)); pg.on('dialog',d=>d.accept());
+  await pg.goto(B+'/admin'); await pg.fill('#un',u); await pg.fill('#pw',RPW); await pg.click('#go'); await pg.waitForSelector('.stats',{timeout:8000});
+  const out=await pg.evaluate(async(L)=>{const o=[];for(const [l,m,url,b] of L){const r=await fetch(url,{method:m,headers:{'content-type':'application/json'},body:b?JSON.stringify(b):undefined});let j=null;try{j=await r.clone().json()}catch{}o.push([l,r.status,j&&j.item&&j.item.id]);}return o;},CK(role));
+  const bad=[]; CK(role).forEach(([l,,,,e],i)=>{const want=e[role], got=out[i][1]; const ok=want==='n'?got!==403:want===got; if(!ok) bad.push(`${l}: want ${want} got ${got}`);});
+  sh[role]=out.find(x=>x[0]==='submit road closure')[2];
+  await T(`roles: ${role} API matrix (${CK(role).length} checks)`, async()=>{ if(bad.length) throw new Error(bad.join(' | ')); return out.filter(x=>x[1]===403).length+' × 403 as expected'; });
+  await T(`roles: ${role} UI menu + buttons`, async()=>{ const nav=await pg.locator('#nav a').evaluateAll(as=>as.map(x=>x.getAttribute('href')));
+    const want={staff:{has:['#mod','#c/requests','#me'],not:['#roadq','#audit','#texts','#settings','#antispam','#users','#ptycctv','#c/areas']},admin:{has:['#roadq','#audit','#c/areas'],not:['#texts','#settings','#antispam','#users','#ptycctv']},superadmin:{has:['#roadq','#audit','#texts','#settings','#antispam','#users','#ptycctv'],not:[]}}[role];
+    const miss=want.has.filter(h=>!nav.includes(h)), extra=want.not.filter(h=>nav.includes(h)); if(miss.length||extra.length) throw new Error('missing '+miss+' extra '+extra);
+    await pg.goto(B+'/admin#c/reports'); await pg.waitForSelector('#tb .ed'); const del=await pg.locator('#bd').count(), hid=await pg.locator('#bs option[value=hidden]').count();
+    if((role==='superadmin')!==!!del) throw new Error('bulk delete button visibility'); if((role==='staff')===!!hid) throw new Error('hidden option visibility');
+    await pg.locator('#tb .ed').first().click(); await pg.waitForSelector('.modal'); const dis=await pg.locator('.modal input[data-f]:not([data-f=stnote])').evaluateAll(xs=>xs.filter(x=>!x.disabled).length), dl=await pg.locator('.modal #dl').count(), sv=await pg.locator('.modal #sv').count();
+    if(role!=='superadmin'&&dis) throw new Error('fields editable'); if((role==='superadmin')!==!!dl) throw new Error('delete btn'); if(!sv) throw new Error('no save (status)');
+    await pg.selectOption('.modal [data-f=status]','verified'); await pg.click('.modal #sv'); await pg.waitForSelector('.modal',{state:'detached'});
+    if(role==='admin'){ await pg.goto(B+'/admin#c/areas'); await pg.waitForSelector('#tb .ed'); if(await pg.locator('#add').count()) throw new Error('admin sees + add'); }
+    await pg.goto(B+'/admin#mod'); await pg.waitForTimeout(900); const rej=await pg.locator('[data-a=reject],#bR').count(), ap=await pg.locator('#bA').count(); if(!ap) throw new Error('no approve'); if((role==='staff')===!!rej) throw new Error('reject visibility');
+    if(role!=='superadmin') await pg.screenshot({path:O+'roles-'+role+'.png'});
+    await pg.goto(B+'/#/staff'); await pg.waitForSelector('.sst'); const pdel=await pg.locator('.del').count(), asg=await pg.locator('.asg').count(); if((role==='superadmin')!==!!pdel||(role==='superadmin')!==!!asg) throw new Error(`staff panel del=${pdel} asg=${asg}`);
+    return nav.length+' menu items; buttons ok'; });
+  if(role==='admin'&&sh.staff) await T('roles: admin approves staff road submission', async()=>{ const s=await pg.evaluate(async(id)=>(await fetch('/api/admin/roads/'+id+'/approve',{method:'POST',headers:{'content-type':'application/json'},body:'{}'})).status,sh.staff); if(s!==200) throw new Error('status '+s); return sh.staff+' approved'; });
+  await c.close(); }
  await br.close();
  console.log(JSON.stringify({res,errs},null,1)); })();
