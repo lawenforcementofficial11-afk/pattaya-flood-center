@@ -554,6 +554,38 @@ app.get('/api/admin/stats', staff, (req, res) => {
 });
 app.get('/api/admin/audit', admin, (req, res) => res.json(db.audit.slice(-2000).reverse()));
 
+// ---------- full-data export for supervisors' Google Sheet (token = EXPORT_TOKEN env, or admin session) ----------
+// Citizens' phones are masked (last 4 digits kept); IPs, device ids, vote/spam fingerprints and photo bytes are never exported.
+const exportOk = (req) => { const want = process.env.EXPORT_TOKEN || ''; const got = String(req.query.token || req.headers['x-export-token'] || '');
+  if (want.length >= 24 && got.length === want.length && crypto.timingSafeEqual(Buffer.from(got), Buffer.from(want))) return true;
+  const u = readUser(req); return !!(u && RANK[u.role] >= RANK.admin); };
+const maskPhone = (p) => (p ? 'xxx-xxx-' + last4(p) : '');
+function exportAll() {
+  const pick = (r, keys) => Object.fromEntries(keys.map((k) => [k, Array.isArray(r[k]) ? r[k].join(', ') : r[k] ?? '']));
+  const reports = db.reports.map((r) => ({ ...pick(r, ['id', 'createdAt', 'areaName', 'level', 'note', 'lat', 'lng', 'status', 'mod', 'modBy', 'modAt', 'cleared']), levelText: LEVELS()[r.level] || '', confirms: r.confirms || 1, votesYes: r.votes?.yes?.length || 0, votesNo: r.votes?.no?.length || 0, cm: LEVEL_CM[r.level] ?? '', photo: r.photo ? 1 : 0 }));
+  const requests = db.requests.map((r) => ({ ...pick(r, ['id', 'createdAt', 'kind', 'areaName', 'name', 'people', 'needs', 'address', 'note', 'assignee', 'priority', 'status', 'lat', 'lng', 'updatedAt']), phone: maskPhone(r.phone) }));
+  const roads = db.roads.map((r) => pick(r, ['id', 'createdAt', 'type', 'title', 'note', 'status', 'lat', 'lng']));
+  const lostfound = db.lostfound.map((r) => ({ ...pick(r, ['id', 'createdAt', 'type', 'category', 'title', 'detail', 'place', 'status', 'mod']), phone: maskPhone(r.phone) }));
+  const missing = db.missing.map((r) => ({ ...pick(r, ['id', 'createdAt', 'personName', 'age', 'lastSeen', 'description', 'reporterName', 'status', 'mod']), reporterPhone: maskPhone(r.reporterPhone) }));
+  const c = db.contacts || {}, con = (t) => (x) => ({ group: t, ...pick(x, ['id', 'name', 'phone', 'note', 'verified', 'source']) });
+  const contacts = [...(c.emergency || []).map(con('ฉุกเฉิน')), ...(c.health || []).map(con('โรงพยาบาล/สาธารณสุข/ศูนย์พักพิง'))];
+  const areas = (c.areas || []).map((a) => pick(a, ['id', 'name', 'org', 'coordinator', 'phone', 'lat', 'lng', 'served', 'verified', 'source']));
+  const audit = db.audit.slice(-2000).map((a) => pick(a, ['at', 'by', 'action', 'coll', 'id', 'detail']));
+  const count = (a, k) => a.reduce((o, r) => ((o[r[k] || '-'] = (o[r[k] || '-'] || 0) + 1), o), {});
+  const summary = { generatedAt: new Date().toISOString(), totals: { reports: reports.length, requests: requests.length, roads: roads.length, lostfound: lostfound.length, missing: missing.length, contacts: contacts.length, areas: areas.length, audit: db.audit.length },
+    reportsByLevel: count(reports, 'level'), reportsByArea: count(reports, 'areaName'), requestsByStatus: count(requests, 'status'), requestsByKind: count(requests, 'kind'), levels: LEVELS(), statusNames: STATUS_TEXT() };
+  return { summary, reports, requests, roads, lostfound, missing, contacts, areas, audit };
+}
+app.get('/api/export/all', (req, res) => {
+  if (!exportOk(req)) return res.status(401).json({ error: 'unauthorized' });
+  const data = exportAll(); res.set('cache-control', 'no-store');
+  const ds = req.query.dataset;
+  if (req.query.format === 'csv') { const a = data[ds]; if (!Array.isArray(a)) return res.status(400).json({ error: 'dataset=' + Object.keys(data).filter((k) => k !== 'summary').join('|') });
+    const cols = [...new Set(a.flatMap(Object.keys))], q = (v) => { const s = v == null ? '' : String(v); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    return res.type('text/csv; charset=utf-8').send('\ufeff' + [cols.join(','), ...a.map((r) => cols.map((k) => q(r[k])).join(','))].join('\r\n')); }
+  res.json(ds ? data[ds] ?? null : data);
+});
+
 // ---------- Pattaya City official CCTV (livestream.pattaya.go.th) ----------
 // Only the public camera list (metadata) is fetched server-side. Live video is WebRTC gated by Cloudflare Turnstile
 // and frame-ancestors CSP, so we never proxy/rehost streams: the site links out to livestream.pattaya.go.th.
