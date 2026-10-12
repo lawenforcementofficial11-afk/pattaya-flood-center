@@ -45,6 +45,7 @@ async function init() {
   db.contacts ||= JSON.parse(JSON.stringify(seed));
   for (const k of ['reports', 'requests', 'missing', 'lostfound', 'audit', 'roads', 'users']) db[k] ||= [];
   db.seq ||= 1000; db.texts ||= {}; db.i18n ||= {}; for (const l of ['en', 'zh']) db.i18n[l] ||= {};
+  db.geofence = { ...GEO_DEFAULT, ...(db.geofence || {}) };
   db.moderation = { ...JSON.parse(JSON.stringify(MOD_DEFAULT)), ...(db.moderation || {}) };
   { let n = 0; for (const k of MOD_COLLS) for (const x of db[k]) if (!x.mod) { x.mod = 'verified'; x.modBy = 'migration'; n++; } if (n) console.log(`moderation: migrated ${n} existing records to verified`); }
   db.antispam = { ...JSON.parse(JSON.stringify(AS_DEFAULT)), ...(db.antispam || {}) }; db.antispam.limits = { ...AS_DEFAULT.limits, ...db.antispam.limits };
@@ -121,7 +122,24 @@ async function savePhoto(dataUrl) {
   const f = crypto.randomBytes(8).toString('hex') + '.' + (m[1] === 'jpeg' ? 'jpg' : m[1]);
   await store.putPhoto(f, 'image/' + m[1], buf); return '/uploads/' + f;
 }
-function inPattaya(lat, lng) { return lat > 12.6 && lat < 13.3 && lng > 100.6 && lng < 101.3; }
+// ---------- jurisdiction: Pattaya City municipal boundary (OSM relation 12645794, incl. Ko Lan / Ko Sak / Ko Khrok) ----------
+const BOUNDARY = JSON.parse(fs.readFileSync(path.join(__dirname, 'geo/pattaya-boundary.geojson'), 'utf8'));
+const POLYS = BOUNDARY.geometry.type === 'MultiPolygon' ? BOUNDARY.geometry.coordinates : [BOUNDARY.geometry.coordinates];
+const BBOX = (() => { let a = [90, 180, -90, -180]; for (const p of POLYS) for (const [x, y] of p[0]) a = [Math.min(a[0], y), Math.min(a[1], x), Math.max(a[2], y), Math.max(a[3], x)]; return a; })(); // [s,w,n,e]
+const ringHas = (r, lat, lng) => { let c = false; for (let i = 0, j = r.length - 1; i < r.length; j = i++) { const [xi, yi] = r[i], [xj, yj] = r[j]; if ((yi > lat) !== (yj > lat) && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) c = !c; } return c; };
+const segM = (lat, lng, [x1, y1], [x2, y2]) => { const kx = 108500, ky = 111000, px = (lng - x1) * kx, py = (lat - y1) * ky, dx = (x2 - x1) * kx, dy = (y2 - y1) * ky, L2 = dx * dx + dy * dy; const t = L2 ? Math.max(0, Math.min(1, (px * dx + py * dy) / L2)) : 0; return Math.hypot(px - t * dx, py - t * dy); };
+function insideCity(lat, lng, buf) {
+  if (POLYS.some((p) => ringHas(p[0], lat, lng) && !p.slice(1).some((h) => ringHas(h, lat, lng)))) return true;
+  if (!(buf > 0)) return false; for (const p of POLYS) { const r = p[0]; for (let i = 1; i < r.length; i++) if (segM(lat, lng, r[i - 1], r[i]) <= buf) return true; } return false;
+}
+const GEO_DEFAULT = { on: true, bufferM: 300 };
+function inPattaya(lat, lng) { if (lat == null || lng == null) return false; const g = db.geofence || GEO_DEFAULT; if (!g.on) return lat > 12.6 && lat < 13.3 && lng > 100.6 && lng < 101.3; return insideCity(lat, lng, g.bufferM); }
+const insideArea = (a) => a.lat == null || inPattaya(a.lat, a.lng);
+function outsideErr(lat, lng) {
+  const near = db.contacts.areas.filter((a) => a.lat != null && !insideArea(a) && a.phone).map((a) => ({ a, d: lat != null ? km(lat, lng, a.lat, a.lng) : 0 })).sort((x, y) => x.d - y.d).slice(0, 3);
+  const hint = near.length ? ' ' + S('err.outside.near', 'หน่วยงานใกล้คุณ:') + ' ' + near.map(({ a }) => `${a.org || a.name} ${a.phone}`).join(' · ') : '';
+  return Object.assign(new Error(S('err.outside', 'ตำแหน่งนี้อยู่นอกเขตเมืองพัทยา ระบบนี้รับเรื่องเฉพาะในเขตเมืองพัทยา (รวมเกาะล้าน) — กรณีฉุกเฉินโทร 1669 / 1784') + hint), { status: 400, outside: true, nearby: near.map(({ a }) => ({ name: a.name, org: a.org, phone: a.phone })) });
+}
 const area = (id) => db.contacts.areas.find((a) => a.id === id);
 const last4 = (p) => String(p || '').replace(/\D/g, '').slice(-4);
 const publicReport = (r) => ({ confirms: r.confirms || 1, mod: r.mod, cleared: !!r.cleared, yes: r.votes?.yes.length || 0, no: r.votes?.no.length || 0, id: r.id, areaId: r.areaId, areaName: r.areaName, level: r.level, levelText: LEVELS()[r.level], cm: LEVEL_CM[r.level], lat: r.lat, lng: r.lng, note: r.note, photo: r.photo, createdAt: r.createdAt, status: r.status });
@@ -178,7 +196,7 @@ function rainStations() {
     const j = await getJSON('https://api-v3.thaiwater.net/api/v1/thaiwater30/public/rain_24h', 30000);
     const L = (j.data || []).filter((s) => s.geocode?.province_code === '20' && s.station?.tele_station_lat)
       .map((s) => ({ name: s.station.tele_station_name.th, amphoe: s.geocode.amphoe_name.th, rain24h: +s.rain_24h, at: s.rainfall_datetime, lat: s.station.tele_station_lat, lng: s.station.tele_station_long, d: km(s.station.tele_station_lat, s.station.tele_station_long, CENTER.lat, CENTER.lng) }))
-      .filter((s) => s.d < 30).sort((a, b) => b.rain24h - a.rain24h).slice(0, 10).map(({ d, ...s }) => ({ ...s, distanceKm: Math.round(d) }));
+      .filter((s) => s.d < 30).sort((a, b) => (inPattaya(b.lat, b.lng) - inPattaya(a.lat, a.lng)) || 0).filter((s, i, arr) => !arr.some((x) => inPattaya(x.lat, x.lng)) || inPattaya(s.lat, s.lng)).sort((a, b) => b.rain24h - a.rain24h).slice(0, 10).map(({ d, ...s }) => ({ ...s, distanceKm: Math.round(d) }));
     return { ok: true, source: 'คลังข้อมูลน้ำแห่งชาติ (api-v3.thaiwater.net) ฝนสะสม 24 ชม.', fetchedAt: new Date().toISOString(), stations: L };
   });
 }
@@ -276,7 +294,7 @@ function afterMod(coll, r) {
   broadcast('staff:update', { coll, item: r }, true); broadcast('staff:mod', modCounts(), true);
 }
 app.get('/api/health', (req, res) => res.json({ ok: true, storage: store.kind, time: new Date().toISOString() }));
-app.get('/api/config', (req, res) => res.json({ city: 'เมืองพัทยา', province: 'ชลบุรี', center: CENTER, levels: LEVELS(), kinds: KINDS(), statusNames: STATUS_TEXT(), contacts: db.contacts, moderation: { mode: M().mode }, texts: textsFor(L()), lang: L(), langs: LANGS, turnstileSiteKey: TURNSTILE?.site || null, antispam: { minFillSec: db.antispam.on ? db.antispam.minFillSec : 0 }, settings: db.settings, cctv: visible(db.cctv), links: visible(db.links) }));
+app.get('/api/config', (req, res) => res.json({ city: 'เมืองพัทยา', province: 'ชลบุรี', center: CENTER, levels: LEVELS(), kinds: KINDS(), statusNames: STATUS_TEXT(), contacts: { ...db.contacts, areas: db.contacts.areas.filter(insideArea) }, geo: { on: db.geofence.on, bufferM: db.geofence.bufferM, bbox: BBOX, boundary: BOUNDARY.geometry }, moderation: { mode: M().mode }, texts: textsFor(L()), lang: L(), langs: LANGS, turnstileSiteKey: TURNSTILE?.site || null, antispam: { minFillSec: db.antispam.on ? db.antispam.minFillSec : 0 }, settings: db.settings, cctv: visible(db.cctv), links: visible(db.links) }));
 app.get('/api/forecast', wrap(async (req, res) => res.json(await forecast())));
 app.get('/api/water', wrap(async (req, res) => res.json(await waterLevels())));
 app.get('/api/rain', wrap(async (req, res) => res.json(await rainStations())));
@@ -290,7 +308,7 @@ app.get('/api/reports', (req, res) => { const since = Date.now() - (num(req.quer
 app.post('/api/reports', guard('reports'), wrap(async (req, res) => {
   const b = req.body || {}; const lat = num(b.lat), lng = num(b.lng);
   if (!LEVEL_CM[b.level]) return res.status(400).json({ error: S('err.level', 'เลือกระดับน้ำ') });
-  if (lat == null || !inPattaya(lat, lng)) return res.status(400).json({ error: S('err.outside', 'ตำแหน่งต้องอยู่ในพื้นที่พัทยา/บางละมุง') });
+  if (lat == null || !inPattaya(lat, lng)) { const e = outsideErr(lat, lng); return res.status(400).json({ error: e.message, outside: true, nearby: e.nearby }); }
   const dup = findDup('reports', (x) => isPublic(x) && x.level === b.level && dist(x.lat, x.lng, lat, lng) <= db.antispam.dedupeMeters);
   if (dup) { if (addVote(dup, req, 'yes')) asStats.merged++; save(); afterMod('reports', dup); return res.json({ ok: true, id: dup.id, merged: true, confirms: dup.confirms, mod: dup.mod }); }
   const a = area(b.areaId), note = clean(b.note, 300), areaName = a?.name || clean(b.areaName, 80);
@@ -312,6 +330,7 @@ app.post('/api/reports/:id/vote', wrap(async (req, res) => {
 app.post('/api/requests', guard('requests'), wrap(async (req, res) => {
   const b = req.body || {}; const a = area(b.areaId);
   if (!a) return res.status(400).json({ error: S('err.area', 'เลือกพื้นที่') });
+  { const la0 = num(b.lat), ln0 = num(b.lng); if (!insideArea(a) || (la0 != null && ln0 != null && !inPattaya(la0, ln0))) { const e = outsideErr(la0 ?? a.lat, ln0 ?? a.lng); return res.status(400).json({ error: e.message, outside: true, nearby: e.nearby }); } }
   if (!a.served) return res.status(400).json({ error: S('err.notserved', 'ยังไม่เปิดรับคำขอทางเว็บสำหรับพื้นที่นี้ กรุณาโทร 1669 / 1784 / 1337') + ` (${a.name})` });
   const phone = clean(b.phone, 20); if (last4(phone).length < 4) return res.status(400).json({ error: S('err.phone', 'กรอกเบอร์โทรที่ติดต่อได้') });
   const name = clean(b.name, 80); if (!name) return res.status(400).json({ error: S('err.name', 'กรอกชื่อ') });
@@ -554,6 +573,10 @@ app.put('/api/admin/settings', admin, (req, res) => {
   if (b.reset) db.settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
   audit(req, 'settings', 'settings', null, Object.keys(b).join(', ')); save(); broadcast('cms', { coll: 'settings' }); res.json({ ok: true, settings: db.settings });
 });
+app.get('/api/admin/geofence', admin, (req, res) => res.json({ geofence: db.geofence, defaults: GEO_DEFAULT, source: BOUNDARY.properties }));
+app.put('/api/admin/geofence', admin, (req, res) => { const b = req.body || {}, g = db.geofence, old = JSON.stringify(g);
+  if ('on' in b) g.on = !!b.on; if ('bufferM' in b) { const v = Number(b.bufferM); if (Number.isFinite(v)) g.bufferM = Math.round(Math.min(10000, Math.max(0, v))); }
+  audit(req, 'geofence', 'geofence', null, `${old} → ${JSON.stringify(g)}`); save(); broadcast('cms', { coll: 'geofence' }); res.json({ ok: true, geofence: g }); });
 // ---------- moderation queue & settings ----------
 const modItem = (coll, x) => ({ coll, ...x, yes: x.votes?.yes.length || 0, no: x.votes?.no.length || 0 });
 app.get('/api/admin/moderation', staff, (req, res) => {
@@ -602,7 +625,7 @@ function hits(coords, zones) { const hit = new Map(); for (const [lng, lat] of c
 function circle(z, n = 10) { const pts = []; for (let i = 0; i <= n; i++) { const t = 2 * Math.PI * i / n; pts.push([+(z.lng + Math.sin(t) * z.rM / 108500).toFixed(6), +(z.lat + Math.cos(t) * z.rM / 111000).toFixed(6)]); } return [pts]; }
 app.get('/api/route', wrap(async (req, res) => {
   const a = [num(req.query.fromLat), num(req.query.fromLng)], b = [num(req.query.toLat), num(req.query.toLng)];
-  if (a.concat(b).some((x) => x == null) || !inPattaya(...a) || !inPattaya(...b)) return res.status(400).json({ error: S('err.routeoutside', 'จุดเริ่มและปลายทางต้องอยู่ในพื้นที่พัทยา/บางละมุง') });
+  if (a.concat(b).some((x) => x == null) || !inPattaya(...a) || !inPattaya(...b)) return res.status(400).json({ error: S('err.routeoutside', 'จุดเริ่มและปลายทางต้องอยู่ในเขตเมืองพัทยา') });
   const zones = floodZones(); let routes = [], engine;
   try {
     if (process.env.ORS_API_KEY) {

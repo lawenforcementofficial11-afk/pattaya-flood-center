@@ -45,10 +45,19 @@ function chrome() {
   $('#banner').innerHTML = b.on && b.text ? `<div class="banner ${esc(b.level)}">${esc(b.text)}</div>` : '';
   $('#ebar').innerHTML = `<div class="ebar">${T('site.ebar', 'ฉุกเฉิน โทร')} <a href="tel:1669">1669</a>·<a href="tel:1784">1784</a>·<a href="tel:1337">1337</a> ${T('site.ebar2', '(เมืองพัทยา)')}</div>`;
 }
-function tiles(m) { L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(m); return m; }
+function tiles(m) { L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(m);
+  const g = C.cfg?.geo; if (g?.boundary) { const [s, w, n, e] = g.bbox; m.setMaxBounds([[s - 0.06, w - 0.08], [n + 0.06, e + 0.08]]); m.options.minZoom = 11;
+    L.geoJSON(g.boundary, { interactive: false, style: { color: '#0e7490', weight: 3, dashArray: '8 6', fill: true, fillOpacity: 0.03 } }).addTo(m)
+      .bindTooltip?.(T('geo.label', 'เขตเมืองพัทยา')); }
+  return m; }
+// point-in-polygon against the Pattaya City boundary (server re-checks with the admin buffer)
+const inCity = (lat, lng) => { const g = C.cfg?.geo; if (!g?.on || !g.boundary) return true; const P = g.boundary.type === 'MultiPolygon' ? g.boundary.coordinates : [g.boundary.coordinates];
+  const has = (r) => { let c = false; for (let i = 0, j = r.length - 1; i < r.length; j = i++) { const [xi, yi] = r[i], [xj, yj] = r[j]; if ((yi > lat) !== (yj > lat) && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) c = !c; } return c; };
+  return P.some((p) => has(p[0])); };
 async function photoData(input) { const f = input.files?.[0]; if (!f) return null; const img = await createImageBitmap(f); const s = Math.min(1, 1280 / Math.max(img.width, img.height)); const c = document.createElement('canvas'); c.width = img.width * s; c.height = img.height * s; c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); return c.toDataURL('image/jpeg', 0.75); }
 function gps() { return new Promise((ok, no) => navigator.geolocation ? navigator.geolocation.getCurrentPosition((p) => ok([p.coords.latitude, p.coords.longitude]), () => no(new Error(T('err.gpsdenied', 'ไม่ได้รับอนุญาตตำแหน่ง'))), { enableHighAccuracy: true, timeout: 10000 }) : no(new Error(T('err.nogps', 'อุปกรณ์ไม่รองรับ GPS')))); }
-async function geocode(q) { const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=th&viewbox=100.70,13.10,101.10,12.75&bounded=1&accept-language=${LANG === 'zh' ? 'zh,en' : LANG}&q=${encodeURIComponent(q)}`); return r.json(); }
+async function geocode(q) { const [s, w, n, e] = C.cfg?.geo?.bbox || [12.75, 100.7, 13.1, 101.1];
+  const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=10&countrycodes=th&viewbox=${w},${n},${e},${s}&bounded=1&accept-language=${LANG === 'zh' ? 'zh,en' : LANG}&q=${encodeURIComponent(q)}`); return (await r.json()).filter((x) => inCity(+x.lat, +x.lon)).slice(0, 5); }
 const back = () => `<p><a href="#/">${T('nav.back', '← กลับหน้าหลัก')}</a></p>`;
 const title = (k, d) => { document.title = (C.cfg?.texts?.[k] || d) + ' | ' + (C.cfg?.texts?.['site.name'] || 'ศูนย์ช่วยเหลือน้ำท่วม'); };
 

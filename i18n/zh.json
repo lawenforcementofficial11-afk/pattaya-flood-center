@@ -36,7 +36,7 @@
 "weather.stationnote":"芭提雅/邦拉蒙境内没有遥测水位站，因此显示春武里/罗勇/北柳最近的站点",
 "err.ratelimit":"提交过于频繁，请稍后再试",
 "err.level":"请选择水位",
-"err.outside":"位置必须在芭提雅/邦拉蒙范围内",
+"err.outside":"该位置位于芭提雅市辖区之外。本系统仅受理芭提雅市辖区（含格兰岛）内的报告——紧急情况请拨打 1669 / 1784",
 "err.area":"请选择区域",
 "err.notserved":"该区域尚未开放网上申请，请拨打 1669 / 1784 / 1337",
 "err.phone":"请填写可联系的电话号码",
@@ -50,7 +50,7 @@
 "map.closed":"道路封闭",
 "map.detour":"绕行路线",
 "map.zonereport":"条报告",
-"err.routeoutside":"起点和终点必须在芭提雅/邦拉蒙范围内",
+"err.routeoutside":"起点和终点必须在芭提雅市辖区内",
 "err.routefail":"路线计算服务无响应",
 "map.warnnoavoid":"找不到能避开所有积水点的路线 — 此路线经过的风险点最少，请谨慎驾驶",
 "key":"默认值",
@@ -345,4 +345,6 @@
 "mod.msg.held":"您的报告将在工作人员审核后公开显示",
 "mod.msg.pending":"已在地图上以“待核实”显示——其他人确认或工作人员审核后将被核实",
 "err.voted":"此设备/网络已对该报告投过票",
-"err.notfound":"未找到该报告"}
+"err.notfound":"未找到该报告",
+"err.outside.near":"您附近的机构：",
+"geo.label":"芭提雅市辖区边界"}

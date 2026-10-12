@@ -5,7 +5,7 @@ const api = async (u, o = {}) => { const r = await fetch(u, { headers: { 'conten
 const fmt = (iso) => iso ? new Date(iso).toLocaleString('th-TH', { day: 'numeric', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' }) : '-';
 const toast = (m, ok = true) => { const d = document.createElement('div'); d.textContent = m; d.style.cssText = `position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:${ok ? '#166534' : '#b91c1c'};color:#fff;padding:10px 16px;border-radius:10px;z-index:3000`; document.body.appendChild(d); setTimeout(() => d.remove(), 2500); };
 let SC = null; const RANK = { staff: 1, admin: 2, superadmin: 3 }; const can = (r) => SC && RANK[SC.me.role] >= RANK[r];
-const ACT = { login: 'เข้าสู่ระบบ', update: 'แก้ไข', delete: 'ลบ', create: 'สร้าง', contacts: 'แก้เบอร์ติดต่อ', texts: 'แก้ข้อความ', 'text-reset': 'คืนค่าข้อความ', antispam: 'ตั้งค่ากันสแปม', settings: 'ตั้งค่าเว็บ', password: 'เปลี่ยนรหัสผ่าน', export: 'ส่งออก CSV', 'bulk-status': 'เปลี่ยนสถานะหลายรายการ', 'mod-approve': 'อนุมัติรายงาน', 'mod-reject': 'ปฏิเสธรายงาน', 'mod-hold': 'กักรายงานไว้ตรวจ', 'mod-auto': 'ยืนยันอัตโนมัติ', 'mod-held': 'กักอัตโนมัติ', 'mod-cleared': 'แจ้งน้ำลดแล้ว', 'mod-mode': 'เปลี่ยนโหมดตรวจสอบ', 'mod-settings': 'ตั้งค่าการตรวจสอบ' };
+const ACT = { login: 'เข้าสู่ระบบ', update: 'แก้ไข', delete: 'ลบ', create: 'สร้าง', contacts: 'แก้เบอร์ติดต่อ', texts: 'แก้ข้อความ', 'text-reset': 'คืนค่าข้อความ', antispam: 'ตั้งค่ากันสแปม', settings: 'ตั้งค่าเว็บ', password: 'เปลี่ยนรหัสผ่าน', export: 'ส่งออก CSV', 'bulk-status': 'เปลี่ยนสถานะหลายรายการ', 'mod-approve': 'อนุมัติรายงาน', 'mod-reject': 'ปฏิเสธรายงาน', 'mod-hold': 'กักรายงานไว้ตรวจ', 'mod-auto': 'ยืนยันอัตโนมัติ', 'mod-held': 'กักอัตโนมัติ', 'mod-cleared': 'แจ้งน้ำลดแล้ว', 'mod-mode': 'เปลี่ยนโหมดตรวจสอบ', 'mod-settings': 'ตั้งค่าการตรวจสอบ', geofence: 'ตั้งค่าเขตเมืองพัทยา', logo: 'เปลี่ยนโลโก้' };
 let MODN = 0; const modBadgeNav = () => { const a = document.querySelector('#nav a[href="#mod"]'); if (a) a.innerHTML = '🛂 ตรวจสอบรายงาน' + (MODN ? ` <span class="nbadge">${MODN}</span>` : ''); };
 const sseL = new Set(); function adminSSE() { const es = new EventSource('/api/events');
   es.addEventListener('staff:mod', (e) => { MODN = JSON.parse(e.data).total; modBadgeNav(); sseL.forEach((f) => f('staff:mod')); });
@@ -182,9 +182,15 @@ async function modSettings(el) {
   $('#msv', el).onclick = () => put({ mode: el.querySelector('[name=mmode]:checked').value, autoVerifyN: $('#mN').value, clearN: $('#mC').value, voteLimit: { n: $('#mVn').value, min: $('#mVm').value }, distinctIp: $('#mIp').checked, holdLinks: $('#mL').checked, holdPhones: $('#mP').checked, words: $('#mW').value.split('\n'), flagged: $('#mF').value.split(/\s+/) }).catch((e) => toast(e.message, false));
   $('#mrs', el).onclick = () => confirm('คืนค่าเริ่มต้นการตรวจสอบ?') && put({ reset: true });
 }
+async function geoSettings(el) {
+  const { geofence: g, source } = await api('/api/admin/geofence');
+  el.innerHTML = `<div class="card"><h2>🗺️ เขตรับเรื่อง: เมืองพัทยา</h2><p class="muted">ขอบเขต: ${esc(source.name)} — ${esc(source.source)}</p><label style="font-weight:400"><input type="checkbox" id="gOn" style="width:auto" ${g.on ? 'checked' : ''}> รับเรื่องเฉพาะในเขตเมืองพัทยา (ปฏิเสธนอกเขต พร้อมแนะนำหน่วยงานใกล้เคียง)</label>
+    <label>ระยะผ่อนผันรอบเขต (เมตร)</label><input id="gBuf" type="number" min="0" max="10000" value="${g.bufferM}"><p><button class="btn" id="gSv">💾 บันทึกเขต</button></p></div>`;
+  $('#gSv', el).onclick = async () => { try { await api('/api/admin/geofence', { method: 'PUT', body: { on: $('#gOn').checked, bufferM: $('#gBuf').value } }); toast('บันทึกเขตแล้ว'); } catch (e) { toast(e.message, false); } };
+}
 async function settings() {
   const { settings: s } = await api('/api/admin/settings'); const secs = s.sections.map((x) => ({ ...x }));
-  app.innerHTML = `<div id="modset"></div><div class="grid two"><div class="card"><h2>🎨 ชื่อเว็บ โลโก้ สี</h2><p class="muted">ชื่อเว็บ/คำโปรย/ส่วนท้าย/ชื่อหน้า แก้ได้ที่ <a href="#texts">ข้อความทั้งเว็บ</a> → กลุ่ม "ทั้งเว็บ"</p>
+  app.innerHTML = `<div id="modset"></div><div id="geoset"></div><div class="grid two"><div class="card"><h2>🎨 ชื่อเว็บ โลโก้ สี</h2><p class="muted">ชื่อเว็บ/คำโปรย/ส่วนท้าย/ชื่อหน้า แก้ได้ที่ <a href="#texts">ข้อความทั้งเว็บ</a> → กลุ่ม "ทั้งเว็บ"</p>
      <label>โลโก้ (อีโมจิ)</label><input id="logo" value="${esc(s.logo)}"><label>หรือ URL รูปโลโก้ (https://…)</label><input id="logoUrl" value="${esc(s.logoUrl)}">
      <label>สีหลัก (ปุ่ม/ลิงก์)</label><input type="color" id="primary" value="${esc(s.primary)}"><label>สีแถบด้านบน</label><input type="color" id="header" value="${esc(s.header)}"><label>สีพื้นหลัง</label><input type="color" id="bg" value="${esc(s.bg)}"></div>
     <div class="card"><h2>📢 ประกาศด่วน (แบนเนอร์)</h2><label><input type="checkbox" id="bon" style="width:auto" ${s.banner.on ? 'checked' : ''}> แสดงแบนเนอร์บนทุกหน้า</label><label>ข้อความ</label><textarea id="btext">${esc(s.banner.text)}</textarea>
@@ -195,7 +201,7 @@ async function settings() {
   const ds = () => { $('#secs').innerHTML = secs.map((x, i) => `<li><input type="checkbox" data-i="${i}" class="on" style="width:auto" ${x.on ? 'checked' : ''}><span>${esc(SECNAME[x.id] || x.id)}</span><button class="btn sm alt up" data-i="${i}">↑</button><button class="btn sm alt dn" data-i="${i}">↓</button></li>`).join(''); };
   $('#secs').onclick = (e) => { const i = +e.target.dataset.i; if (e.target.classList.contains('on')) secs[i].on = e.target.checked; const j = e.target.classList.contains('up') ? i - 1 : e.target.classList.contains('dn') ? i + 1 : -1; if (j >= 0 && j < secs.length) { [secs[i], secs[j]] = [secs[j], secs[i]]; ds(); } };
   const bp = () => { $('#bprev').innerHTML = $('#bon').checked && $('#btext').value ? `<div class="banner ${$('#blevel').value}" style="margin-top:8px;border-radius:8px">${esc($('#btext').value)}</div>` : '<p class="muted">(ไม่แสดงแบนเนอร์)</p>'; };
-  ['bon', 'btext', 'blevel'].forEach((id) => ($('#' + id).oninput = bp)); bp(); ds(); modSettings($('#modset'));
+  ['bon', 'btext', 'blevel'].forEach((id) => ($('#' + id).oninput = bp)); bp(); ds(); modSettings($('#modset')); geoSettings($('#geoset'));
   $('#sv').onclick = async () => { await api('/api/admin/settings', { method: 'PUT', body: { logo: $('#logo').value, logoUrl: $('#logoUrl').value, primary: $('#primary').value, header: $('#header').value, bg: $('#bg').value, banner: { on: $('#bon').checked, text: $('#btext').value, level: $('#blevel').value }, sections: secs } }); toast('บันทึกแล้ว'); $('#pv').src = '/?t=' + Date.now(); };
   $('#rs').onclick = async () => { if (!confirm('คืนค่าการตั้งค่าเว็บทั้งหมด?')) return; await api('/api/admin/settings', { method: 'PUT', body: { reset: true } }); settings(); };
 }
