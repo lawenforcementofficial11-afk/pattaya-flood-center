@@ -386,4 +386,5 @@
 "site.ebar.1784":"Disaster (DDPM)",
 "site.logoalt":"Seal of Pattaya City",
 "weather.updated":"Last updated",
-"weather.fcfail2":"No forecast data available right now, please try again later"}
+"weather.fcfail2":"No forecast data available right now, please try again later",
+"map.lg.area":"Flooded area (colour = level · dashed = unverified)"}
