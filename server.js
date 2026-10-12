@@ -1,29 +1,52 @@
-// ศูนย์ช่วยเหลือน้ำท่วม เมืองพัทยา — Express + JSON file storage + SSE
+// ศูนย์ช่วยเหลือน้ำท่วม เมืองพัทยา — Express + storage adapter (file / Postgres) + SSE + back-office
 const express = require('express');
 const fs = require('fs'), path = require('path'), crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 const PORT = process.env.PORT || 3600;
 const STAFF_PASSWORD = process.env.STAFF_PASSWORD || 'pattaya1337';
+const ADMIN_USERNAME = (process.env.ADMIN_USERNAME || 'admin').toLowerCase();
 const SECRET = process.env.SESSION_SECRET || crypto.createHash('sha256').update('pfc:' + STAFF_PASSWORD).digest('hex');
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
-const UP_DIR = path.join(DATA_DIR, 'uploads');
-const DB_FILE = path.join(DATA_DIR, 'db.json');
 const CENTER = { lat: 12.9236, lng: 100.8825 };
-fs.mkdirSync(UP_DIR, { recursive: true });
+const store = require('./store')(DATA_DIR);
+const TEXTS = require('./texts').build();
 
 // ---------- storage ----------
 let db;
-function load() {
-  try { db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); } catch { db = {}; }
+const DEFAULT_SETTINGS = { logo: '🌊', logoUrl: '', primary: '#0369a1', header: '#0c4a6e', bg: '#f0f9ff',
+  banner: { on: false, text: '', level: 'warn' },
+  sections: ['food', 'contact', 'sos', 'report', 'near', 'services', 'situation', 'moreinfo', 'emergency', 'stafflink'].map((id) => ({ id, on: true })) };
+const SEED_CCTV = [{ title: 'กล้อง CCTV ทั่วไทย', url: 'https://cctv.maholan.net/', note: 'รวมกล้องสาธารณะทั่วประเทศ ค้นหา "พัทยา" / "ชลบุรี"' }, { title: 'ThaiWater', url: 'https://www.thaiwater.net/', note: 'ภาพสถานีโทรมาตร' }];
+const SEED_LINKS = [{ title: 'คลังข้อมูลน้ำแห่งชาติ (ThaiWater)', url: 'https://www.thaiwater.net/', note: 'สถานีวัดน้ำและฝนทั่วประเทศ' }, { title: 'กรมชลประทาน', url: 'https://bigdata-swoc.rid.go.th/pier/all', note: 'ระดับน้ำทั้งประเทศ' }, { title: 'กรมทรัพยากรน้ำ', url: 'https://telemetry.dwr.go.th/home?layerMapType=BASIN', note: 'สถานีโทรมาตรรายลุ่มน้ำ' }, { title: 'กรมอุตุนิยมวิทยา', url: 'https://weather.tmd.go.th/', note: 'เรดาร์ฝนและพยากรณ์' }];
+async function init() {
+  db = await store.load();
+  if (store.kind === 'postgres' && !db.contacts && fs.existsSync(path.join(DATA_DIR, 'db.json'))) { try { db = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'db.json'), 'utf8')); console.log('imported data/db.json into Postgres'); } catch {} }
   const seed = require('./seed-contacts');
   db.contacts ||= JSON.parse(JSON.stringify(seed));
-  for (const k of ['reports', 'requests', 'missing', 'lostfound', 'audit', 'roads']) db[k] ||= [];
-  db.seq ||= 1000;
+  for (const k of ['reports', 'requests', 'missing', 'lostfound', 'audit', 'roads', 'users']) db[k] ||= [];
+  db.seq ||= 1000; db.texts ||= {};
+  db.settings = { ...JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), ...(db.settings || {}) };
+  const ids = db.settings.sections.map((s) => s.id); for (const s of DEFAULT_SETTINGS.sections) if (!ids.includes(s.id)) db.settings.sections.push({ ...s });
+  db.cctvOverrides ||= {};
+  db.cctv ||= SEED_CCTV.map((x) => ({ id: newId('V'), kind: 'link', ...x, status: 'open', createdAt: new Date().toISOString() }));
+  db.links ||= SEED_LINKS.map((x) => ({ id: newId('K'), ...x, status: 'open', createdAt: new Date().toISOString() }));
+  for (const k of ['health', 'emergency']) for (const x of db.contacts[k]) x.id ||= newId(k === 'health' ? 'H' : 'E');
+  if (!db.users.length) { db.users.push({ id: newId('U'), username: ADMIN_USERNAME, name: 'ผู้ดูแลระบบ', role: 'superadmin', hash: bcrypt.hashSync(STAFF_PASSWORD, 10), active: true, pwv: 1, createdAt: new Date().toISOString() }); console.log(`bootstrapped superadmin "${ADMIN_USERNAME}" from STAFF_PASSWORD`); }
+  if (db.audit.length > 5000) db.audit = db.audit.slice(-5000);
   save();
 }
-let saveT;
-function save() { clearTimeout(saveT); saveT = setTimeout(() => { const t = DB_FILE + '.tmp'; fs.writeFileSync(t, JSON.stringify(db, null, 1)); fs.renameSync(t, DB_FILE); }, 50); }
-load();
+let saveT, saving = Promise.resolve();
+function save() { clearTimeout(saveT); saveT = setTimeout(flush, 200); }
+function flush() { clearTimeout(saveT); saving = saving.then(() => store.save(db)).catch((e) => console.error('save failed', e.message)); return saving; }
 const newId = (p) => p + '-' + (++db.seq);
+for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, async () => { await flush(); process.exit(0); });
+
+// ---------- texts ----------
+const S = (k, d) => (db.texts[k] != null && db.texts[k] !== '' ? db.texts[k] : d);
+const LEVELS = () => ({ dry: S('level.dry', 'แห้ง / ต่ำกว่าข้อเท้า <10 ซม.'), ankle: S('level.ankle', 'ข้อเท้า–เข่า 10–50 ซม.'), knee: S('level.knee', 'เข่า–เอว 50–100 ซม.'), waist: S('level.waist', 'เอว–อก 100–130 ซม.'), chest: S('level.chest', 'อกขึ้นไป 130–180 ซม.'), roof: S('level.roof', 'มิดหัว / ท่วมหลังคา >180 ซม.') });
+const KINDS = () => ({ food: S('kind.food', 'ขออาหาร / ถุงยังชีพ'), evacuate: S('kind.evacuate', 'ติดอยู่ ต้องการอพยพ'), medical: S('kind.medical', 'ผู้ป่วย / ต้องการยา'), other: S('kind.other', 'อื่น ๆ') });
+const STATUS_TEXT = () => ({ new: S('st.new', 'รับเรื่องแล้ว รอเจ้าหน้าที่'), triaged: S('st.triaged', 'คัดกรองแล้ว จัดลำดับความเร่งด่วน'), assigned: S('st.assigned', 'ส่งต่อทีมในพื้นที่แล้ว'), enroute: S('st.enroute', 'ทีมกำลังเดินทาง'), resolved: S('st.resolved', 'ช่วยเหลือเรียบร้อย'), closed: S('st.closed', 'ปิดเคส'), verified: S('st.verified', 'ยืนยันแล้ว'), hidden: S('st.hidden', 'ซ่อน'), searching: S('st.searching', 'กำลังตามหา'), found: S('st.found', 'พบตัวแล้ว'), open: S('st.open', 'ประกาศอยู่ / เปิด') });
+const LEVEL_CM = { dry: 5, ankle: 30, knee: 75, waist: 115, chest: 155, roof: 200 };
 
 // ---------- SSE ----------
 const clients = new Set();
@@ -34,33 +57,41 @@ function broadcast(type, payload, staffOnly = false) {
 setInterval(() => { for (const c of clients) c.res.write(': ping\n\n'); }, 25000);
 
 // ---------- auth ----------
+const RANK = { staff: 1, admin: 2, superadmin: 3 };
+const ROLE_NAME = { staff: 'เจ้าหน้าที่ / กู้ภัย', admin: 'ผู้ดูแล', superadmin: 'ผู้ดูแลสูงสุด' };
 const sign = (v) => crypto.createHmac('sha256', SECRET).update(v).digest('hex');
-function makeToken(name) { const v = Buffer.from(JSON.stringify({ n: name, e: Date.now() + 12 * 3600e3 })).toString('base64url'); return v + '.' + sign(v); }
-function readToken(req) {
+function makeToken(u) { const v = Buffer.from(JSON.stringify({ u: u.id, v: u.pwv, e: Date.now() + 12 * 3600e3 })).toString('base64url'); return v + '.' + sign(v); }
+function readUser(req) {
   const m = (req.headers.cookie || '').match(/pfc_staff=([^;]+)/); const t = m ? m[1] : (req.headers['x-staff-token'] || '');
   const [v, s] = String(t).split('.'); if (!v || !s) return null;
   const a = Buffer.from(sign(v)), b = Buffer.from(s); if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
-  try { const o = JSON.parse(Buffer.from(v, 'base64url').toString()); return o.e > Date.now() ? o : null; } catch { return null; }
+  try { const o = JSON.parse(Buffer.from(v, 'base64url').toString()); if (!(o.e > Date.now())) return null; const u = db.users.find((x) => x.id === o.u); return u && u.active && u.pwv === o.v ? u : null; } catch { return null; }
 }
-const staff = (req, res, next) => { const u = readToken(req); if (!u) return res.status(401).json({ error: 'ต้องเข้าสู่ระบบเจ้าหน้าที่' }); req.staff = u; next(); };
+const auth = (min = 'staff') => (req, res, next) => {
+  const u = readUser(req); if (!u) return res.status(401).json({ error: S('err.login', 'ต้องเข้าสู่ระบบเจ้าหน้าที่') });
+  if (RANK[u.role] < RANK[min]) return res.status(403).json({ error: 'สิทธิ์ไม่พอสำหรับการทำรายการนี้' });
+  req.user = u; req.staff = { n: u.name || u.username }; next();
+};
+const staff = auth('staff');
+const pubUser = (u) => ({ id: u.id, username: u.username, name: u.name, role: u.role, roleName: ROLE_NAME[u.role], active: u.active, createdAt: u.createdAt, lastLogin: u.lastLogin });
+function audit(req, action, coll, id, detail) { db.audit.push({ at: new Date().toISOString(), by: req.user ? (req.user.name || req.user.username) : 'ระบบ', user: req.user?.username, action, coll, id, detail: detail ? String(detail).slice(0, 300) : undefined }); if (db.audit.length > 6000) db.audit.splice(0, 1000); }
 
 // ---------- helpers ----------
 const clean = (s, n = 500) => String(s ?? '').replace(/[<>]/g, '').trim().slice(0, n);
-const num = (x) => { const n = Number(x); return Number.isFinite(n) ? n : null; };
-const LEVELS = { dry: 'แห้ง / ต่ำกว่าข้อเท้า <10 ซม.', ankle: 'ข้อเท้า–เข่า 10–50 ซม.', knee: 'เข่า–เอว 50–100 ซม.', waist: 'เอว–อก 100–130 ซม.', chest: 'อกขึ้นไป 130–180 ซม.', roof: 'มิดหัว / ท่วมหลังคา >180 ซม.' };
-const LEVEL_CM = { dry: 5, ankle: 30, knee: 75, waist: 115, chest: 155, roof: 200 };
-function savePhoto(dataUrl) {
+const num = (x) => { const n = Number(x); return x !== '' && x != null && Number.isFinite(n) ? n : null; };
+async function savePhoto(dataUrl) {
   if (!dataUrl) return null;
   const m = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
   if (!m) return null; const buf = Buffer.from(m[2], 'base64'); if (buf.length > 3e6) return null;
   const f = crypto.randomBytes(8).toString('hex') + '.' + (m[1] === 'jpeg' ? 'jpg' : m[1]);
-  fs.writeFileSync(path.join(UP_DIR, f), buf); return '/uploads/' + f;
+  await store.putPhoto(f, 'image/' + m[1], buf); return '/uploads/' + f;
 }
 function inPattaya(lat, lng) { return lat > 12.6 && lat < 13.3 && lng > 100.6 && lng < 101.3; }
 const area = (id) => db.contacts.areas.find((a) => a.id === id);
 const last4 = (p) => String(p || '').replace(/\D/g, '').slice(-4);
-const publicReport = (r) => ({ id: r.id, areaId: r.areaId, areaName: r.areaName, level: r.level, levelText: LEVELS[r.level], cm: LEVEL_CM[r.level], lat: r.lat, lng: r.lng, note: r.note, photo: r.photo, createdAt: r.createdAt, status: r.status });
-const publicRequest = (r) => ({ id: r.id, kind: r.kind, areaName: r.areaName, lat: r.lat ? +r.lat.toFixed(3) : null, lng: r.lng ? +r.lng.toFixed(3) : null, needs: r.needs, status: r.status, createdAt: r.createdAt });
+const publicReport = (r) => ({ id: r.id, areaId: r.areaId, areaName: r.areaName, level: r.level, levelText: LEVELS()[r.level], cm: LEVEL_CM[r.level], lat: r.lat, lng: r.lng, note: r.note, photo: r.photo, createdAt: r.createdAt, status: r.status });
+const publicRequest = (r) => ({ id: r.id, kind: r.kind, areaName: r.areaName, lat: r.lat ? +r.lat.toFixed(3) : null, lng: r.lng ? +r.lng.toFixed(3) : null, needs: r.needs, status: r.status, statusText: r.statusText, createdAt: r.createdAt });
+const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 // ---------- external data (cached) ----------
 const cache = {};
@@ -82,8 +113,8 @@ function forecast() {
     const total = h.precipitation.reduce((s, x) => s + (x || 0), 0);
     const maxProb = Math.max(...h.precipitation_probability.map((x) => x || 0));
     const i = h.precipitation.findIndex((x) => x >= 0.1);
-    let label = 'ไม่มีฝน', color = '#16a34a';
-    if (total >= 0.5) { label = 'ฝนเล็กน้อย'; color = '#0284c7'; } if (total >= 10) { label = 'ฝนปานกลาง'; color = '#ca8a04'; } if (total >= 35) { label = 'ฝนหนัก'; color = '#ea580c'; } if (total >= 90) { label = 'ฝนหนักมาก'; color = '#dc2626'; }
+    let label = S('rain.none', 'ไม่มีฝน'), color = '#16a34a';
+    if (total >= 0.5) { label = S('rain.light', 'ฝนเล็กน้อย'); color = '#0284c7'; } if (total >= 10) { label = S('rain.moderate', 'ฝนปานกลาง'); color = '#ca8a04'; } if (total >= 35) { label = S('rain.heavy', 'ฝนหนัก'); color = '#ea580c'; } if (total >= 90) { label = S('rain.veryheavy', 'ฝนหนักมาก'); color = '#dc2626'; }
     return { ok: true, source: 'Open-Meteo', fetchedAt: new Date().toISOString(), totalMm: +total.toFixed(1), maxProb, startTime: i >= 0 ? h.time[i] : null, label, color,
       hourly: h.time.map((t, k) => ({ t, mm: h.precipitation[k], prob: h.precipitation_probability[k], wind: h.wind_speed_10m[k] })) };
   });
@@ -97,14 +128,14 @@ function waterLevels() {
     const out = pick.map(({ s, d }) => {
       const wl = +s.waterlevel_msl, prev = s.waterlevel_msl_previous != null ? +s.waterlevel_msl_previous : null, bank = s.station.min_bank;
       const diff = bank != null ? +(wl - bank).toFixed(2) : null;
-      let status = 'ปกติ', sev = 0;
-      if (diff != null) { if (diff > 0) { status = 'ล้นตลิ่ง'; sev = 3; } else if (diff > -0.5) { status = 'ใกล้ล้นตลิ่ง'; sev = 2; } else if (s.situation_level >= 4 || diff > -1.2) { status = 'น้ำมาก'; sev = 1; } }
-      const trend = prev == null ? 'ไม่ทราบ' : wl - prev > 0.02 ? 'กำลังขึ้น' : wl - prev < -0.02 ? 'กำลังลง' : 'ทรงตัว';
+      let status = S('rain.st0', 'ปกติ'), sev = 0;
+      if (diff != null) { if (diff > 0) { status = S('rain.st3', 'ล้นตลิ่ง'); sev = 3; } else if (diff > -0.5) { status = S('rain.st2', 'ใกล้ล้นตลิ่ง'); sev = 2; } else if (s.situation_level >= 4 || diff > -1.2) { status = S('rain.st1', 'น้ำมาก'); sev = 1; } }
+      const trend = prev == null ? S('rain.tr_unknown', 'ไม่ทราบ') : wl - prev > 0.02 ? S('rain.tr_up', 'กำลังขึ้น') : wl - prev < -0.02 ? S('rain.tr_down', 'กำลังลง') : S('rain.tr_flat', 'ทรงตัว');
       return { id: s.station.id, name: s.station.tele_station_name.th, code: s.station.tele_station_oldcode, province: s.geocode.province_name.th, amphoe: s.geocode.amphoe_name.th, tambon: s.geocode.tumbon_name.th,
         lat: s.station.tele_station_lat, lng: s.station.tele_station_long, distanceKm: Math.round(d), level: wl, bank, diff, status, sev, trend, measuredAt: s.waterlevel_datetime, agency: s.agency?.agency_shortname?.th?.trim() };
     }).sort((a, b) => b.sev - a.sev || a.distanceKm - b.distanceKm);
     return { ok: true, source: 'คลังข้อมูลน้ำแห่งชาติ (api-v3.thaiwater.net)', fetchedAt: new Date().toISOString(), stations: out,
-      note: 'ไม่มีสถานีวัดระดับน้ำโทรมาตรในเขตเมืองพัทยา/บางละมุง จึงแสดงสถานีที่ใกล้ที่สุดใน ชลบุรี/ระยอง/ฉะเชิงเทรา' };
+      note: S('weather.stationnote', 'ไม่มีสถานีวัดระดับน้ำโทรมาตรในเขตเมืองพัทยา/บางละมุง จึงแสดงสถานีที่ใกล้ที่สุดใน ชลบุรี/ระยอง/ฉะเชิงเทรา') };
   });
 }
 function rainStations() {
@@ -119,124 +150,285 @@ function rainStations() {
 
 // ---------- app ----------
 const app = express();
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '4mb' }));
-app.use('/uploads', express.static(UP_DIR, { maxAge: '7d' }));
-app.use(express.static(path.join(__dirname, 'public')));
+app.get('/uploads/:f', wrap(async (req, res) => { const p = await store.getPhoto(req.params.f); if (!p) return res.status(404).end(); res.set('content-type', p.mime).set('cache-control', 'public, max-age=604800').send(p.buf); }));
+const escH = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const color = (c, d) => (/^#[0-9a-fA-F]{3,8}$/.test(c || '') ? c : d);
+function renderIndex(req, res) {
+  const st = db.settings, h = fs.readFileSync(path.join(__dirname, 'public/index.html'), 'utf8');
+  const out = h.replace(/\{\{T:([a-z0-9_.-]+)\|([^}]*)\}\}/g, (_, k, d) => escH(S(k, d)))
+    .replace('{{THEME}}', `:root{--primary:${color(st.primary, '#0369a1')};--header:${color(st.header, '#0c4a6e')};--bg:${color(st.bg, '#f0f9ff')}}`)
+    .replace('{{LOGO}}', st.logoUrl && /^(https?:\/\/|\/)/.test(st.logoUrl) ? `<img src="${escH(st.logoUrl)}" alt="" style="height:32px">` : escH(st.logo || '🌊'))
+    .replace('{{HEADERCOLOR}}', color(st.header, '#0c4a6e'));
+  res.set('content-type', 'text/html; charset=utf-8').set('cache-control', 'no-cache').send(out);
+}
+app.get(['/', '/index.html'], renderIndex);
+app.get(['/admin', '/admin/'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
+app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 const rl = new Map();
-function limit(req, res, next) { const k = req.ip + req.path, now = Date.now(); const a = (rl.get(k) || []).filter((t) => now - t < 60e3); if (a.length >= 10) return res.status(429).json({ error: 'ส่งถี่เกินไป ลองใหม่ในอีกสักครู่' }); a.push(now); rl.set(k, a); next(); }
+function limit(req, res, next) { const k = req.ip + req.path, now = Date.now(); const a = (rl.get(k) || []).filter((t) => now - t < 60e3); if (a.length >= 10) return res.status(429).json({ error: S('err.ratelimit', 'ส่งถี่เกินไป ลองใหม่ในอีกสักครู่') }); a.push(now); rl.set(k, a); next(); }
 
-app.get('/api/health', (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
-app.get('/api/config', (req, res) => res.json({ city: 'เมืองพัทยา', province: 'ชลบุรี', center: CENTER, levels: LEVELS, contacts: db.contacts }));
-app.get('/api/forecast', async (req, res) => res.json(await forecast()));
-app.get('/api/water', async (req, res) => res.json(await waterLevels()));
-app.get('/api/rain', async (req, res) => res.json(await rainStations()));
+const visible = (arr) => arr.filter((x) => x.status !== 'hidden');
+app.get('/api/health', (req, res) => res.json({ ok: true, storage: store.kind, time: new Date().toISOString() }));
+app.get('/api/config', (req, res) => res.json({ city: 'เมืองพัทยา', province: 'ชลบุรี', center: CENTER, levels: LEVELS(), kinds: KINDS(), statusNames: STATUS_TEXT(), contacts: db.contacts, texts: db.texts, settings: db.settings, cctv: visible(db.cctv), links: visible(db.links) }));
+app.get('/api/forecast', wrap(async (req, res) => res.json(await forecast())));
+app.get('/api/water', wrap(async (req, res) => res.json(await waterLevels())));
+app.get('/api/rain', wrap(async (req, res) => res.json(await rainStations())));
 app.get('/api/events', (req, res) => {
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
-  res.write('retry: 5000\n\n'); const c = { res, staff: !!readToken(req) }; clients.add(c); req.on('close', () => clients.delete(c));
+  res.write('retry: 5000\n\n'); const c = { res, staff: !!readUser(req) }; clients.add(c); req.on('close', () => clients.delete(c));
 });
 
 // water reports (public)
 app.get('/api/reports', (req, res) => { const since = Date.now() - (num(req.query.hours) || 48) * 3600e3; res.json(db.reports.filter((r) => r.status !== 'hidden' && Date.parse(r.createdAt) > since).map(publicReport).reverse()); });
-app.post('/api/reports', limit, (req, res) => {
+app.post('/api/reports', limit, wrap(async (req, res) => {
   const b = req.body || {}; const lat = num(b.lat), lng = num(b.lng);
-  if (!LEVELS[b.level]) return res.status(400).json({ error: 'เลือกระดับน้ำ' });
-  if (lat == null || !inPattaya(lat, lng)) return res.status(400).json({ error: 'ตำแหน่งต้องอยู่ในพื้นที่พัทยา/บางละมุง' });
+  if (!LEVEL_CM[b.level]) return res.status(400).json({ error: S('err.level', 'เลือกระดับน้ำ') });
+  if (lat == null || !inPattaya(lat, lng)) return res.status(400).json({ error: S('err.outside', 'ตำแหน่งต้องอยู่ในพื้นที่พัทยา/บางละมุง') });
   const a = area(b.areaId);
-  const r = { id: newId('R'), areaId: a?.id || null, areaName: a?.name || clean(b.areaName, 80), level: b.level, lat, lng, note: clean(b.note, 300), photo: savePhoto(b.photo), status: 'new', createdAt: new Date().toISOString() };
-  db.reports.push(r); save(); broadcast('report', publicReport(r)); res.json({ ok: true, id: r.id });
-});
+  const r = { id: newId('R'), areaId: a?.id || null, areaName: a?.name || clean(b.areaName, 80), level: b.level, lat, lng, note: clean(b.note, 300), photo: await savePhoto(b.photo), status: 'new', createdAt: new Date().toISOString() };
+  db.reports.push(r); save(); broadcast('report', publicReport(r)); broadcast('staff:report', r, true); res.json({ ok: true, id: r.id });
+}));
 
 // help requests (food/supplies, rescue, medical)
-const KINDS = { food: 'ขออาหาร / ถุงยังชีพ', evacuate: 'ติดอยู่ ต้องการอพยพ', medical: 'ผู้ป่วย / ต้องการยา', other: 'อื่น ๆ' };
-app.post('/api/requests', limit, (req, res) => {
+app.post('/api/requests', limit, wrap(async (req, res) => {
   const b = req.body || {}; const a = area(b.areaId);
-  if (!a) return res.status(400).json({ error: 'เลือกพื้นที่' });
-  if (!a.served) return res.status(400).json({ error: `ยังไม่เปิดรับคำขอทางเว็บสำหรับ ${a.name} กรุณาโทร 1669 / 1784 / 1337` });
-  const phone = clean(b.phone, 20); if (last4(phone).length < 4) return res.status(400).json({ error: 'กรอกเบอร์โทรที่ติดต่อได้' });
-  const name = clean(b.name, 80); if (!name) return res.status(400).json({ error: 'กรอกชื่อ' });
-  const r = { id: newId('C'), kind: KINDS[b.kind] ? b.kind : 'food', areaId: a.id, areaName: a.name, name, phone, people: num(b.people) || 1,
-    needs: (Array.isArray(b.needs) ? b.needs : []).map((x) => clean(x, 40)).slice(0, 10), level: LEVELS[b.level] ? b.level : null,
-    lat: num(b.lat), lng: num(b.lng), address: clean(b.address, 300), note: clean(b.note, 500), photo: savePhoto(b.photo),
-    status: 'new', statusText: 'รับเรื่องแล้ว รอเจ้าหน้าที่', assignee: '', history: [{ at: new Date().toISOString(), s: 'new', by: 'ประชาชน' }], createdAt: new Date().toISOString() };
+  if (!a) return res.status(400).json({ error: S('err.area', 'เลือกพื้นที่') });
+  if (!a.served) return res.status(400).json({ error: S('err.notserved', 'ยังไม่เปิดรับคำขอทางเว็บสำหรับพื้นที่นี้ กรุณาโทร 1669 / 1784 / 1337') + ` (${a.name})` });
+  const phone = clean(b.phone, 20); if (last4(phone).length < 4) return res.status(400).json({ error: S('err.phone', 'กรอกเบอร์โทรที่ติดต่อได้') });
+  const name = clean(b.name, 80); if (!name) return res.status(400).json({ error: S('err.name', 'กรอกชื่อ') });
+  const r = { id: newId('C'), kind: KINDS()[b.kind] ? b.kind : 'food', areaId: a.id, areaName: a.name, name, phone, people: num(b.people) || 1,
+    needs: (Array.isArray(b.needs) ? b.needs : []).map((x) => clean(x, 40)).slice(0, 10), level: LEVEL_CM[b.level] ? b.level : null,
+    lat: num(b.lat), lng: num(b.lng), address: clean(b.address, 300), note: clean(b.note, 500), photo: await savePhoto(b.photo),
+    status: 'new', statusText: STATUS_TEXT().new, assignee: '', history: [{ at: new Date().toISOString(), s: 'new', by: S('st.bycitizen', 'ประชาชน') }], createdAt: new Date().toISOString() };
   db.requests.push(r); save(); broadcast('request', publicRequest(r)); broadcast('staff:request', r, true); res.json({ ok: true, id: r.id });
-});
+}));
 app.get('/api/requests/public', (req, res) => res.json(db.requests.filter((r) => r.status !== 'deleted').map(publicRequest).reverse()));
 app.get('/api/status', (req, res) => {
   const r = db.requests.find((x) => x.id.toUpperCase() === String(req.query.id || '').trim().toUpperCase());
-  if (!r || last4(r.phone) !== last4(req.query.phone) || !last4(req.query.phone)) return res.status(404).json({ error: 'ไม่พบเคส ตรวจเลขเคสและเบอร์ 4 ตัวท้าย' });
-  res.json({ id: r.id, kind: KINDS[r.kind], areaName: r.areaName, status: r.status, statusText: r.statusText, assignee: r.assignee, history: r.history.map((h) => ({ at: h.at, s: h.s, note: h.note })), createdAt: r.createdAt });
+  if (!r || last4(r.phone) !== last4(req.query.phone) || !last4(req.query.phone)) return res.status(404).json({ error: S('err.nocase', 'ไม่พบเคส ตรวจเลขเคสและเบอร์ 4 ตัวท้าย') });
+  const ST = STATUS_TEXT();
+  res.json({ id: r.id, kind: KINDS()[r.kind], areaName: r.areaName, status: r.status, statusText: ST[r.status] || r.statusText, assignee: r.assignee, history: r.history.map((h) => ({ at: h.at, s: ST[h.s] || h.s, note: h.note })), createdAt: r.createdAt });
 });
 
 // missing persons (private) & lost-found (public)
-app.post('/api/missing', limit, (req, res) => {
-  const b = req.body || {}; if (!clean(b.personName) || last4(b.reporterPhone).length < 4) return res.status(400).json({ error: 'กรอกชื่อผู้สูญหายและเบอร์ผู้แจ้ง' });
-  const r = { id: newId('M'), personName: clean(b.personName, 80), age: clean(b.age, 10), lastSeen: clean(b.lastSeen, 300), description: clean(b.description, 500), reporterName: clean(b.reporterName, 80), reporterPhone: clean(b.reporterPhone, 20), photo: savePhoto(b.photo), status: 'searching', createdAt: new Date().toISOString() };
+app.post('/api/missing', limit, wrap(async (req, res) => {
+  const b = req.body || {}; if (!clean(b.personName) || last4(b.reporterPhone).length < 4) return res.status(400).json({ error: S('err.missing', 'กรอกชื่อผู้สูญหายและเบอร์ผู้แจ้ง') });
+  const r = { id: newId('M'), personName: clean(b.personName, 80), age: clean(b.age, 10), lastSeen: clean(b.lastSeen, 300), description: clean(b.description, 500), reporterName: clean(b.reporterName, 80), reporterPhone: clean(b.reporterPhone, 20), photo: await savePhoto(b.photo), status: 'searching', createdAt: new Date().toISOString() };
   db.missing.push(r); save(); broadcast('staff:missing', r, true); res.json({ ok: true, id: r.id });
-});
+}));
 app.get('/api/lostfound', (req, res) => res.json(db.lostfound.filter((x) => x.status !== 'hidden').map(({ phone, ...x }) => ({ ...x, phoneMasked: 'xxx-xxx-' + last4(phone) })).reverse()));
-app.post('/api/lostfound', limit, (req, res) => {
-  const b = req.body || {}; if (!clean(b.title) || last4(b.phone).length < 4) return res.status(400).json({ error: 'กรอกหัวข้อและเบอร์ติดต่อ' });
-  const r = { id: newId('L'), type: b.type === 'found' ? 'found' : 'lost', category: clean(b.category, 30), title: clean(b.title, 100), detail: clean(b.detail, 500), place: clean(b.place, 120), phone: clean(b.phone, 20), photo: savePhoto(b.photo), status: 'open', createdAt: new Date().toISOString() };
-  db.lostfound.push(r); save(); broadcast('lostfound', { id: r.id }); res.json({ ok: true, id: r.id });
-});
+app.post('/api/lostfound', limit, wrap(async (req, res) => {
+  const b = req.body || {}; if (!clean(b.title) || last4(b.phone).length < 4) return res.status(400).json({ error: S('err.lf', 'กรอกหัวข้อและเบอร์ติดต่อ') });
+  const r = { id: newId('L'), type: b.type === 'found' ? 'found' : 'lost', category: clean(b.category, 30), title: clean(b.title, 100), detail: clean(b.detail, 500), place: clean(b.place, 120), phone: clean(b.phone, 20), photo: await savePhoto(b.photo), status: 'open', createdAt: new Date().toISOString() };
+  db.lostfound.push(r); save(); broadcast('lostfound', { id: r.id }); broadcast('staff:lostfound', r, true); res.json({ ok: true, id: r.id });
+}));
 
-// ---------- staff ----------
+// ---------- login / users ----------
 app.post('/api/staff/login', limit, (req, res) => {
-  const pw = String(req.body?.password || ''); const a = Buffer.from(crypto.createHash('sha256').update(pw).digest('hex')), b = Buffer.from(crypto.createHash('sha256').update(STAFF_PASSWORD).digest('hex'));
-  if (!crypto.timingSafeEqual(a, b)) return res.status(401).json({ error: 'รหัสผ่านไม่ถูกต้อง' });
-  const name = clean(req.body?.name, 40) || 'เจ้าหน้าที่'; const t = makeToken(name);
-  res.setHeader('set-cookie', `pfc_staff=${t}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200`); res.json({ ok: true, name, token: t });
+  const username = (clean(req.body?.username, 60) || ADMIN_USERNAME).toLowerCase(), pw = String(req.body?.password || '');
+  const u = db.users.find((x) => x.username === username);
+  const ok = u && u.active && bcrypt.compareSync(pw, u.hash);
+  if (!ok) { if (u && !u.active) return res.status(403).json({ error: 'บัญชีนี้ถูกปิดใช้งาน' }); return res.status(401).json({ error: S('err.badpw', 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง') }); }
+  u.lastLogin = new Date().toISOString(); req.user = u; audit(req, 'login'); save();
+  const t = makeToken(u); const secure = req.secure ? '; Secure' : '';
+  res.setHeader('set-cookie', `pfc_staff=${t}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200${secure}`); res.json({ ok: true, name: u.name || u.username, user: pubUser(u), token: t });
 });
 app.post('/api/staff/logout', (req, res) => { res.setHeader('set-cookie', 'pfc_staff=; Path=/; Max-Age=0'); res.json({ ok: true }); });
-app.get('/api/staff/me', staff, (req, res) => res.json({ name: req.staff.n }));
+app.get('/api/staff/me', staff, (req, res) => res.json({ name: req.user.name || req.user.username, user: pubUser(req.user) }));
+app.post('/api/admin/me/password', staff, (req, res) => {
+  const { current, next } = req.body || {}; if (!bcrypt.compareSync(String(current || ''), req.user.hash)) return res.status(400).json({ error: 'รหัสผ่านปัจจุบันไม่ถูกต้อง' });
+  if (String(next || '').length < 8) return res.status(400).json({ error: 'รหัสผ่านใหม่ต้องยาวอย่างน้อย 8 ตัวอักษร' });
+  req.user.hash = bcrypt.hashSync(String(next), 10); req.user.pwv = (req.user.pwv || 1) + 1; audit(req, 'password', 'users', req.user.id, 'เปลี่ยนรหัสผ่านตัวเอง'); save();
+  res.setHeader('set-cookie', `pfc_staff=${makeToken(req.user)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200${req.secure ? '; Secure' : ''}`); res.json({ ok: true });
+});
+const superadmin = auth('superadmin'), admin = auth('admin');
+app.get('/api/admin/users', superadmin, (req, res) => res.json(db.users.map(pubUser)));
+app.post('/api/admin/users', superadmin, (req, res) => {
+  const b = req.body || {}; const username = clean(b.username, 40).toLowerCase();
+  if (!/^[a-z0-9._-]{3,40}$/.test(username)) return res.status(400).json({ error: 'ชื่อผู้ใช้ใช้ a-z 0-9 . _ - อย่างน้อย 3 ตัว' });
+  if (db.users.some((u) => u.username === username)) return res.status(400).json({ error: 'ชื่อผู้ใช้นี้มีอยู่แล้ว' });
+  if (!RANK[b.role]) return res.status(400).json({ error: 'เลือกบทบาท' }); if (String(b.password || '').length < 8) return res.status(400).json({ error: 'รหัสผ่านอย่างน้อย 8 ตัวอักษร' });
+  const u = { id: newId('U'), username, name: clean(b.name, 80) || username, role: b.role, hash: bcrypt.hashSync(String(b.password), 10), active: true, pwv: 1, createdAt: new Date().toISOString() };
+  db.users.push(u); audit(req, 'create', 'users', u.id, `${username} (${u.role})`); save(); res.json({ ok: true, user: pubUser(u) });
+});
+app.put('/api/admin/users/:id', superadmin, (req, res) => {
+  const u = db.users.find((x) => x.id === req.params.id); if (!u) return res.status(404).json({ error: 'ไม่พบผู้ใช้' }); const b = req.body || {};
+  const supers = db.users.filter((x) => x.role === 'superadmin' && x.active && x.id !== u.id).length;
+  if ((b.role && b.role !== 'superadmin' || b.active === false) && u.role === 'superadmin' && !supers) return res.status(400).json({ error: 'ต้องมีผู้ดูแลสูงสุดที่ใช้งานอยู่อย่างน้อย 1 คน' });
+  const ch = [];
+  if (b.name != null) { u.name = clean(b.name, 80); ch.push('ชื่อ'); }
+  if (b.role && RANK[b.role] && b.role !== u.role) { u.role = b.role; ch.push('บทบาท=' + b.role); }
+  if (typeof b.active === 'boolean' && b.active !== u.active) { u.active = b.active; u.pwv = (u.pwv || 1) + 1; ch.push(b.active ? 'เปิดใช้งาน' : 'ปิดใช้งาน'); }
+  if (b.password) { if (String(b.password).length < 8) return res.status(400).json({ error: 'รหัสผ่านอย่างน้อย 8 ตัวอักษร' }); u.hash = bcrypt.hashSync(String(b.password), 10); u.pwv = (u.pwv || 1) + 1; ch.push('ตั้งรหัสผ่านใหม่'); }
+  audit(req, 'update', 'users', u.id, `${u.username}: ${ch.join(', ')}`); save(); res.json({ ok: true, user: pubUser(u) });
+});
+// ---------- staff (triage) ----------
 app.get('/api/staff/data', staff, (req, res) => res.json({ requests: [...db.requests].reverse(), reports: [...db.reports].reverse(), missing: [...db.missing].reverse(), lostfound: [...db.lostfound].reverse() }));
-const COLL = { requests: 'requests', reports: 'reports', missing: 'missing', lostfound: 'lostfound', roads: 'roads' };
-const STATUS_TEXT = { new: 'รับเรื่องแล้ว รอเจ้าหน้าที่', triaged: 'คัดกรองแล้ว จัดลำดับความเร่งด่วน', assigned: 'ส่งต่อทีมในพื้นที่แล้ว', enroute: 'ทีมกำลังเดินทาง', resolved: 'ช่วยเหลือเรียบร้อย', closed: 'ปิดเคส', verified: 'ยืนยันแล้ว', hidden: 'ซ่อน', searching: 'กำลังตามหา', found: 'พบตัวแล้ว', open: 'ประกาศอยู่' };
+function afterChange(c, item) {
+  if (item) broadcast('staff:update', { coll: c, item }, true);
+  if (c === 'requests' && item) broadcast('request', publicRequest(item)); if (c === 'reports' && item) broadcast('report', publicReport(item));
+  if (c === 'roads') broadcast('roads', visible(db.roads)); if (['areas', 'health', 'emergency'].includes(c)) broadcast('contacts', db.contacts);
+  if (['cctv', 'links'].includes(c)) broadcast('cms', { coll: c }); if (c === 'lostfound') broadcast('lostfound', {});
+}
+function setStatus(req, c, r, status, note) {
+  const ST = STATUS_TEXT(); if (!COLLS[c].statuses.includes(status)) return false;
+  r.status = status; if (c === 'requests') r.statusText = ST[status];
+  if (r.history) r.history.push({ at: new Date().toISOString(), s: status, by: req.staff.n, note: clean(note, 200) }); return true;
+}
 app.patch('/api/staff/:coll/:id', staff, (req, res) => {
-  const c = COLL[req.params.coll]; if (!c) return res.status(404).end(); const r = db[c].find((x) => x.id === req.params.id); if (!r) return res.status(404).json({ error: 'ไม่พบ' });
+  const c = req.params.coll, C = COLLS[c]; if (!C || !C.triage) return res.status(404).end(); const r = C.arr().find((x) => x.id === req.params.id); if (!r) return res.status(404).json({ error: 'ไม่พบ' });
   const b = req.body || {};
-  if (b.status && STATUS_TEXT[b.status]) { r.status = b.status; r.statusText = STATUS_TEXT[b.status]; }
+  if (b.status) setStatus(req, c, r, b.status, b.note); else if (r.history && b.note) r.history.push({ at: new Date().toISOString(), s: r.status, by: req.staff.n, note: clean(b.note, 200) });
   if (b.priority) r.priority = clean(b.priority, 10); if (b.assignee != null) r.assignee = clean(b.assignee, 80);
-  if (r.history) r.history.push({ at: new Date().toISOString(), s: r.status, by: req.staff.n, note: clean(b.note, 200) });
-  db.audit.push({ at: new Date().toISOString(), by: req.staff.n, action: 'update', coll: c, id: r.id, status: r.status }); save();
-  broadcast('staff:update', { coll: c, item: r }, true); if (c === 'requests') broadcast('request', publicRequest(r)); if (c === 'reports') broadcast('report', publicReport(r));
+  audit(req, 'update', c, r.id, `สถานะ=${r.status}${b.assignee != null ? ' ทีม=' + r.assignee : ''}`); save(); afterChange(c, r);
   res.json({ ok: true, item: r });
 });
-app.delete('/api/staff/:coll/:id', staff, (req, res) => {
-  const c = COLL[req.params.coll]; if (!c) return res.status(404).end(); const i = db[c].findIndex((x) => x.id === req.params.id); if (i < 0) return res.status(404).json({ error: 'ไม่พบ' });
-  const [r] = db[c].splice(i, 1); if (r.photo) fs.rm(path.join(UP_DIR, path.basename(r.photo)), () => {});
-  db.audit.push({ at: new Date().toISOString(), by: req.staff.n, action: 'delete', coll: c, id: r.id }); save(); broadcast('deleted', { coll: c, id: r.id }); res.json({ ok: true });
-});
-app.put('/api/staff/contacts', staff, (req, res) => {
+async function removeItem(req, c, id) {
+  const a = COLLS[c].arr(); const i = a.findIndex((x) => x.id === id); if (i < 0) return false;
+  const [r] = a.splice(i, 1); if (r.photo) await store.delPhoto(r.photo).catch(() => {});
+  audit(req, 'delete', c, r.id, r.title || r.name || r.personName || r.areaName || ''); broadcast('deleted', { coll: c, id: r.id }); return true;
+}
+app.delete('/api/staff/:coll/:id', admin, wrap(async (req, res) => {
+  if (!COLLS[req.params.coll]) return res.status(404).end(); if (!(await removeItem(req, req.params.coll, req.params.id))) return res.status(404).json({ error: 'ไม่พบ' });
+  save(); afterChange(req.params.coll); res.json({ ok: true });
+}));
+app.put('/api/staff/contacts', admin, (req, res) => {
   const b = req.body || {}; const fix = (p) => { const s = clean(p, 30); return s || null; };
   if (Array.isArray(b.areas)) db.contacts.areas = b.areas.map((a, i) => ({ id: clean(a.id, 30) || 'area' + i, name: clean(a.name, 80), org: clean(a.org, 80), coordinator: clean(a.coordinator, 120), phone: fix(a.phone), verified: !!a.verified, source: clean(a.source, 200), served: !!a.served, lat: num(a.lat), lng: num(a.lng) }));
-  for (const k of ['health', 'emergency']) if (Array.isArray(b[k])) db.contacts[k] = b[k].map((x) => ({ name: clean(x.name, 120), phone: fix(x.phone), note: clean(x.note, 200), verified: !!x.verified, source: clean(x.source, 200) }));
-  db.audit.push({ at: new Date().toISOString(), by: req.staff.n, action: 'contacts' }); save(); broadcast('contacts', db.contacts); res.json({ ok: true, contacts: db.contacts });
+  for (const k of ['health', 'emergency']) if (Array.isArray(b[k])) db.contacts[k] = b[k].map((x) => ({ id: clean(x.id, 30) || newId(k === 'health' ? 'H' : 'E'), name: clean(x.name, 120), phone: fix(x.phone), note: clean(x.note, 200), verified: !!x.verified, source: clean(x.source, 200) }));
+  audit(req, 'contacts', 'contacts'); save(); broadcast('contacts', db.contacts); res.json({ ok: true, contacts: db.contacts });
 });
-
-// ---------- official detours / closed roads (staff) ----------
-app.get('/api/roads', (req, res) => res.json(db.roads.filter((r) => r.status !== 'hidden')));
+app.get('/api/roads', (req, res) => res.json(visible(db.roads)));
 app.post('/api/staff/roads', staff, (req, res) => {
   const b = req.body || {}; const pts = (Array.isArray(b.points) ? b.points : []).map((p) => [num(p[0]), num(p[1])]).filter((p) => p[0] != null && p[1] != null && inPattaya(p[0], p[1]));
-  if (pts.length < 2) return res.status(400).json({ error: 'วาดอย่างน้อย 2 จุด' });
-  const r = { id: newId('W'), type: b.type === 'closed' ? 'closed' : 'detour', title: clean(b.title, 100) || (b.type === 'closed' ? 'ถนนปิด' : 'เส้นทางเลี่ยง'), note: clean(b.note, 300), points: pts.slice(0, 300), status: 'open', by: req.staff.n, createdAt: new Date().toISOString() };
-  db.roads.push(r); db.audit.push({ at: r.createdAt, by: req.staff.n, action: 'road', id: r.id }); save(); broadcast('roads', db.roads.filter((x) => x.status !== 'hidden')); res.json({ ok: true, item: r });
+  if (pts.length < 2) return res.status(400).json({ error: S('err.road2', 'วาดอย่างน้อย 2 จุด') });
+  const r = { id: newId('W'), type: b.type === 'closed' ? 'closed' : 'detour', title: clean(b.title, 100) || (b.type === 'closed' ? S('map.closed', 'ถนนปิด') : S('map.detour', 'เส้นทางเลี่ยง')), note: clean(b.note, 300), points: pts.slice(0, 300), status: 'open', by: req.staff.n, createdAt: new Date().toISOString() };
+  db.roads.push(r); audit(req, 'create', 'roads', r.id, r.title); save(); afterChange('roads', r); res.json({ ok: true, item: r });
+});
+
+// ---------- back-office: generic collections ----------
+const F = (k, label, type = 's', extra = {}) => ({ k, label, type, ...extra });
+const COLLS = {
+  reports: { label: 'รายงานระดับน้ำ', arr: () => db.reports, triage: true, statuses: ['new', 'verified', 'hidden'], fields: [F('areaName', 'พื้นที่'), F('level', 'ระดับน้ำ', 'select', { options: Object.keys(LEVEL_CM) }), F('note', 'หมายเหตุ', 't'), F('lat', 'ละติจูด', 'n'), F('lng', 'ลองจิจูด', 'n')] },
+  requests: { label: 'คำขอช่วยเหลือ / อพยพ / ผู้ป่วย', arr: () => db.requests, triage: true, typeField: 'kind', statuses: ['new', 'triaged', 'assigned', 'enroute', 'resolved', 'closed'], fields: [F('kind', 'ประเภท', 'select', { options: ['food', 'evacuate', 'medical', 'other'] }), F('areaName', 'พื้นที่'), F('name', 'ชื่อ'), F('phone', 'เบอร์โทร'), F('people', 'จำนวนคน', 'n'), F('needs', 'สิ่งที่ต้องการ (คั่นด้วย ,)', 'list'), F('address', 'ที่อยู่', 't'), F('note', 'รายละเอียด', 't'), F('assignee', 'ทีมที่รับผิดชอบ'), F('priority', 'ความเร่งด่วน', 'select', { options: ['', 'low', 'normal', 'high', 'critical'] }), F('lat', 'ละติจูด', 'n'), F('lng', 'ลองจิจูด', 'n')] },
+  missing: { label: 'ตามหาคน', arr: () => db.missing, triage: true, statuses: ['searching', 'found', 'closed'], fields: [F('personName', 'ชื่อผู้สูญหาย'), F('age', 'อายุ'), F('lastSeen', 'พบครั้งสุดท้าย', 't'), F('description', 'ลักษณะ', 't'), F('reporterName', 'ผู้แจ้ง'), F('reporterPhone', 'เบอร์ผู้แจ้ง')] },
+  lostfound: { label: 'ของหาย–ได้คืน', arr: () => db.lostfound, triage: true, typeField: 'type', statuses: ['open', 'closed', 'hidden'], fields: [F('type', 'ประเภท', 'select', { options: ['lost', 'found'] }), F('category', 'หมวด'), F('title', 'หัวข้อ'), F('detail', 'รายละเอียด', 't'), F('place', 'สถานที่'), F('phone', 'เบอร์')] },
+  roads: { label: 'เส้นทางเลี่ยง / ถนนปิด', arr: () => db.roads, triage: true, typeField: 'type', statuses: ['open', 'hidden'], fields: [F('type', 'ประเภท', 'select', { options: ['detour', 'closed'] }), F('title', 'ชื่อ'), F('note', 'หมายเหตุ', 't')] },
+  areas: { label: 'พื้นที่ / ผู้ประสานงาน (พื้นที่ที่ให้บริการ)', arr: () => db.contacts.areas, create: true, fields: [F('id', 'รหัสพื้นที่ (a-z)'), F('name', 'ชื่อพื้นที่'), F('org', 'หน่วยงาน'), F('coordinator', 'ผู้ประสานงาน'), F('phone', 'เบอร์โทร'), F('lat', 'ละติจูด', 'n'), F('lng', 'ลองจิจูด', 'n'), F('served', 'เปิดรับคำขอทางเว็บ', 'b'), F('verified', 'ตรวจสอบเบอร์แล้ว', 'b'), F('source', 'แหล่งที่มา')] },
+  health: { label: 'โรงพยาบาล / สาธารณสุข', arr: () => db.contacts.health, create: true, prefix: 'H', fields: [F('name', 'ชื่อ'), F('phone', 'เบอร์โทร'), F('note', 'หมายเหตุ'), F('verified', 'ตรวจสอบแล้ว', 'b'), F('source', 'แหล่งที่มา')] },
+  emergency: { label: 'เบอร์ฉุกเฉิน', arr: () => db.contacts.emergency, create: true, prefix: 'E', fields: [F('name', 'ชื่อ'), F('phone', 'เบอร์โทร'), F('note', 'หมายเหตุ'), F('verified', 'ตรวจสอบแล้ว', 'b'), F('source', 'แหล่งที่มา')] },
+  cctv: { label: 'ลิงก์กล้อง CCTV', arr: () => db.cctv, create: true, prefix: 'V', statuses: ['open', 'hidden'], fields: [F('title', 'ชื่อ'), F('url', 'ลิงก์ (https://)'), F('kind', 'วิธีแสดงผล', 'select', { options: ['link', 'hls', 'image', 'iframe'] }), F('note', 'คำอธิบาย'), F('lat', 'ละติจูด', 'n'), F('lng', 'ลองจิจูด', 'n')] },
+  links: { label: 'ลิงก์ข้อมูลเพิ่มเติม', arr: () => db.links, create: true, prefix: 'K', statuses: ['open', 'hidden'], fields: [F('title', 'ชื่อ'), F('url', 'ลิงก์ (https://)'), F('note', 'คำอธิบาย')] },
+};
+function coerce(f, v) {
+  if (f.type === 'n') return num(v); if (f.type === 'b') return v === true || v === 'true' || v === 'on' || v === 1;
+  if (f.type === 'list') return (Array.isArray(v) ? v : String(v || '').split(',')).map((x) => clean(x, 40)).filter(Boolean).slice(0, 10);
+  if (f.type === 'select') return f.options.includes(v) ? v : f.options[0];
+  if (f.k === 'url') { const s = clean(v, 400); return /^https?:\/\//.test(s) ? s : ''; }
+  if (f.k === 'phone') return clean(v, 30) || null;
+  return clean(v, f.type === 't' ? 1000 : 200);
+}
+app.get('/api/admin/schema', staff, (req, res) => res.json({ me: pubUser(req.user), roles: ROLE_NAME, levels: LEVELS(), kinds: KINDS(), statusNames: STATUS_TEXT(), storage: store.kind,
+  colls: Object.fromEntries(Object.entries(COLLS).map(([k, c]) => [k, { label: c.label, fields: c.fields, statuses: c.statuses || [], typeField: c.typeField, create: !!c.create, triage: !!c.triage }])) }));
+app.get('/api/admin/c/:coll', staff, (req, res) => { const C = COLLS[req.params.coll]; if (!C) return res.status(404).end(); if (!C.triage && RANK[req.user.role] < 2) return res.status(403).json({ error: 'สิทธิ์ไม่พอ' }); res.json([...C.arr()].reverse()); });
+app.post('/api/admin/c/:coll', admin, (req, res) => {
+  const c = req.params.coll, C = COLLS[c]; if (!C || !C.create) return res.status(404).end(); const b = req.body || {}; const r = {};
+  for (const f of C.fields) r[f.k] = coerce(f, b[f.k]);
+  if (c === 'areas') { r.id = String(r.id || '').toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'area' + (++db.seq); if (db.contacts.areas.some((a) => a.id === r.id)) return res.status(400).json({ error: 'รหัสพื้นที่ซ้ำ' }); } else r.id = newId(C.prefix);
+  if (C.statuses) r.status = C.statuses[0]; r.createdAt = new Date().toISOString();
+  if (!r.name && !r.title) return res.status(400).json({ error: 'กรอกชื่อ' });
+  C.arr().push(r); audit(req, 'create', c, r.id, r.name || r.title); save(); afterChange(c, r); res.json({ ok: true, item: r });
+});
+app.put('/api/admin/c/:coll/:id', admin, (req, res) => {
+  const c = req.params.coll, C = COLLS[c]; if (!C) return res.status(404).end(); const r = C.arr().find((x) => x.id === req.params.id); if (!r) return res.status(404).json({ error: 'ไม่พบ' });
+  const b = req.body || {}, ch = [];
+  for (const f of C.fields) if (f.k in b && !(c === 'areas' && f.k === 'id')) { const v = coerce(f, b[f.k]); if (JSON.stringify(v) !== JSON.stringify(r[f.k])) { r[f.k] = v; ch.push(f.label); } }
+  if (b.status && b.status !== r.status && setStatus(req, c, r, b.status, b.note)) ch.push('สถานะ=' + b.status);
+  if (c === 'requests' && 'areaName' in b) { const a = db.contacts.areas.find((x) => x.name === r.areaName); if (a) r.areaId = a.id; }
+  audit(req, 'update', c, r.id, ch.join(', ')); save(); afterChange(c, r); res.json({ ok: true, item: r });
+});
+app.delete('/api/admin/c/:coll/:id', admin, wrap(async (req, res) => { if (!COLLS[req.params.coll]) return res.status(404).end(); if (!(await removeItem(req, req.params.coll, req.params.id))) return res.status(404).json({ error: 'ไม่พบ' }); save(); afterChange(req.params.coll); res.json({ ok: true }); }));
+app.post('/api/admin/c/:coll/bulk', staff, wrap(async (req, res) => {
+  const c = req.params.coll, C = COLLS[c]; if (!C) return res.status(404).end(); const { ids = [], action, status } = req.body || {}; let n = 0;
+  if (action === 'delete') { if (RANK[req.user.role] < 2) return res.status(403).json({ error: 'สิทธิ์ไม่พอ (ต้องเป็นผู้ดูแล)' }); for (const id of ids) if (await removeItem(req, c, id)) n++; }
+  else if (action === 'status') { if (!C.triage && RANK[req.user.role] < 2) return res.status(403).json({ error: 'สิทธิ์ไม่พอ' }); for (const id of ids) { const r = C.arr().find((x) => x.id === id); if (r && setStatus(req, c, r, status)) { n++; afterChange(c, r); } } audit(req, 'bulk-status', c, null, `${n} รายการ → ${status}`); }
+  else return res.status(400).json({ error: 'action ไม่ถูกต้อง' });
+  save(); afterChange(c); res.json({ ok: true, n });
+}));
+app.get('/api/admin/c/:coll/export.csv', staff, (req, res) => {
+  const C = COLLS[req.params.coll]; if (!C) return res.status(404).end(); if (!C.triage && RANK[req.user.role] < 2) return res.status(403).end();
+  const cols = ['id', ...C.fields.map((f) => f.k).filter((k) => k !== 'id'), ...(C.statuses ? ['status'] : []), 'photo', 'createdAt'];
+  const q = (v) => { const s = Array.isArray(v) ? v.join('; ') : v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const rows = C.arr().map((r) => cols.map((k) => q(r[k])).join(','));
+  req.user && audit(req, 'export', req.params.coll, null, rows.length + ' แถว'); save();
+  res.set('content-type', 'text/csv; charset=utf-8').set('content-disposition', `attachment; filename="${req.params.coll}-${new Date().toISOString().slice(0, 10)}.csv"`).send('\ufeff' + [cols.join(','), ...rows].join('\r\n'));
+});
+app.get('/api/admin/stats', staff, (req, res) => {
+  const since = Date.now() - 24 * 3600e3, out = {};
+  for (const [k, C] of Object.entries(COLLS)) { const a = C.arr(); const by = {}, byType = {}; for (const r of a) { by[r.status || '-'] = (by[r.status || '-'] || 0) + 1; if (C.typeField) byType[r[C.typeField]] = (byType[r[C.typeField]] || 0) + 1; } out[k] = { total: a.length, last24h: a.filter((r) => Date.parse(r.createdAt) > since).length, byStatus: by, byType }; }
+  const open = db.requests.filter((r) => !['resolved', 'closed'].includes(r.status));
+  res.json({ colls: out, openRequestsByKind: open.reduce((o, r) => ((o[r.kind] = (o[r.kind] || 0) + 1), o), {}), users: db.users.filter((u) => u.active).length, storage: store.kind, recent: db.audit.slice(-12).reverse() });
+});
+app.get('/api/admin/audit', admin, (req, res) => res.json(db.audit.slice(-2000).reverse()));
+
+// ---------- Pattaya City official CCTV (livestream.pattaya.go.th) ----------
+// Only the public camera list (metadata) is fetched server-side. Live video is WebRTC gated by Cloudflare Turnstile
+// and frame-ancestors CSP, so we never proxy/rehost streams: the site links out to livestream.pattaya.go.th.
+const PTY_LIVE = 'https://livestream.pattaya.go.th/';
+function pattayaCams() {
+  return cached('ptycams', 10 * 60e3, async () => {
+    const j = await getJSON(PTY_LIVE + 'kapi/live/map', 20000); const items = j?.details?.items || [];
+    return { ok: true, source: 'livestream.pattaya.go.th', fetchedAt: new Date().toISOString(), items: items.map((x) => ({ id: String(x.id), name: String(x.name || ''), location: String(x.location || ''), district: String(x.district || ''), lat: num(x.lat), lng: num(x.lng), state: String(x.monitorState || (x.status ? 'online' : 'offline')), type: String(x.type || '') })) };
+  });
+}
+function mergedCams(all) {
+  return (all.items || []).map((c) => { const o = db.cctvOverrides[c.id] || {}; return { ...c, title: o.title || '', lat: o.lat ?? c.lat, lng: o.lng ?? c.lng, hidden: !!o.hidden, featured: !!o.featured }; });
+}
+app.get('/api/cctv/pattaya', wrap(async (req, res) => { const r = await pattayaCams(); if (!r.ok) return res.json({ ok: false, error: r.error, items: [], liveUrl: PTY_LIVE });
+  res.json({ ok: true, fetchedAt: r.fetchedAt, stale: !!r.stale, liveUrl: PTY_LIVE, items: mergedCams(r).filter((c) => !c.hidden).map(({ hidden, ...c }) => c) }); }));
+app.get('/api/admin/cctv/pattaya', admin, wrap(async (req, res) => { const r = await pattayaCams(); res.json({ ok: !!r.ok, error: r.error, items: mergedCams(r) }); }));
+app.put('/api/admin/cctv/pattaya/:id', admin, (req, res) => {
+  const b = req.body || {}, id = clean(req.params.id, 80); const o = db.cctvOverrides[id] || {};
+  if ('hidden' in b) o.hidden = !!b.hidden; if ('featured' in b) o.featured = !!b.featured; if ('title' in b) o.title = clean(b.title, 120);
+  if ('lat' in b) o.lat = num(b.lat); if ('lng' in b) o.lng = num(b.lng);
+  db.cctvOverrides[id] = o; audit(req, 'update', 'cctv-pattaya', id, JSON.stringify(b).slice(0, 200)); save(); broadcast('cms', { coll: 'cctv' }); res.json({ ok: true });
+});
+
+// ---------- back-office: texts & settings ----------
+app.get('/api/admin/texts', admin, (req, res) => { const reg = require('./texts').build(); Object.assign(TEXTS, reg); res.json(Object.values(TEXTS).map((t) => ({ key: t.key, group: t.group, g: t.g, default: t.d, value: db.texts[t.key] ?? null }))); });
+app.put('/api/admin/texts', admin, (req, res) => {
+  const vals = req.body?.values || (req.body?.key ? { [req.body.key]: req.body.value } : {}); const ch = [];
+  for (const [k, v] of Object.entries(vals)) { if (!TEXTS[k]) continue; const s = String(v ?? '').slice(0, 2000); if (s === '' || s === TEXTS[k].d) delete db.texts[k]; else db.texts[k] = s; ch.push(k); }
+  audit(req, 'texts', 'texts', null, ch.join(', ')); save(); broadcast('cms', { coll: 'texts' }); res.json({ ok: true, n: ch.length });
+});
+app.delete('/api/admin/texts/:key', admin, (req, res) => { delete db.texts[req.params.key]; audit(req, 'text-reset', 'texts', req.params.key); save(); broadcast('cms', { coll: 'texts' }); res.json({ ok: true }); });
+app.get('/api/admin/settings', admin, (req, res) => res.json({ settings: db.settings, defaults: DEFAULT_SETTINGS }));
+app.put('/api/admin/settings', admin, (req, res) => {
+  const b = req.body || {}, s = db.settings;
+  if (b.logo != null) s.logo = clean(b.logo, 8); if (b.logoUrl != null) s.logoUrl = /^(https?:\/\/|\/)/.test(b.logoUrl) ? clean(b.logoUrl, 400) : '';
+  for (const k of ['primary', 'header', 'bg']) if (b[k]) s[k] = color(b[k], s[k]);
+  if (b.banner) s.banner = { on: !!b.banner.on, text: clean(b.banner.text, 500), level: ['info', 'warn', 'danger'].includes(b.banner.level) ? b.banner.level : 'warn' };
+  if (Array.isArray(b.sections)) { const ok = DEFAULT_SETTINGS.sections.map((x) => x.id); const seen = new Set(); s.sections = b.sections.filter((x) => ok.includes(x.id) && !seen.has(x.id) && seen.add(x.id)).map((x) => ({ id: x.id, on: !!x.on })); for (const id of ok) if (!seen.has(id)) s.sections.push({ id, on: true }); }
+  if (b.reset) db.settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+  audit(req, 'settings', 'settings', null, Object.keys(b).join(', ')); save(); broadcast('cms', { coll: 'settings' }); res.json({ ok: true, settings: db.settings });
 });
 // ---------- avoidance routing ----------
 function floodZones() {
   const since = Date.now() - 24 * 3600e3, z = [];
-  for (const r of db.reports) if (r.status !== 'hidden' && Date.parse(r.createdAt) > since && LEVEL_CM[r.level] >= 30) z.push({ lat: r.lat, lng: r.lng, rM: LEVEL_CM[r.level] >= 75 ? 250 : 150, label: 'รายงาน ' + (LEVELS[r.level] || ''), id: r.id });
+  for (const r of db.reports) if (r.status !== 'hidden' && Date.parse(r.createdAt) > since && LEVEL_CM[r.level] >= 30) z.push({ lat: r.lat, lng: r.lng, rM: LEVEL_CM[r.level] >= 75 ? 250 : 150, label: S('map.zonereport', 'รายงาน') + ' ' + (LEVELS()[r.level] || ''), id: r.id });
   for (const w of db.roads) if (w.status !== 'hidden' && w.type === 'closed') for (let i = 0; i < w.points.length; i++) {
-    z.push({ lat: w.points[i][0], lng: w.points[i][1], rM: 80, label: 'ถนนปิด: ' + w.title, id: w.id });
-    if (i) { const a = w.points[i - 1], b = w.points[i]; const n = Math.ceil(km(a[0], a[1], b[0], b[1]) * 1000 / 100); for (let k = 1; k < n; k++) z.push({ lat: a[0] + (b[0] - a[0]) * k / n, lng: a[1] + (b[1] - a[1]) * k / n, rM: 80, label: 'ถนนปิด: ' + w.title, id: w.id }); }
+    z.push({ lat: w.points[i][0], lng: w.points[i][1], rM: 80, label: S('map.closed', 'ถนนปิด') + ': ' + w.title, id: w.id });
+    if (i) { const a = w.points[i - 1], b = w.points[i]; const n = Math.ceil(km(a[0], a[1], b[0], b[1]) * 1000 / 100); for (let k = 1; k < n; k++) z.push({ lat: a[0] + (b[0] - a[0]) * k / n, lng: a[1] + (b[1] - a[1]) * k / n, rM: 80, label: S('map.closed', 'ถนนปิด') + ': ' + w.title, id: w.id }); }
   }
   return z;
 }
 function hits(coords, zones) { const hit = new Map(); for (const [lng, lat] of coords) for (const z of zones) if (km(lat, lng, z.lat, z.lng) * 1000 < z.rM) hit.set(z.id, z.label); return [...hit.values()]; }
 function circle(z, n = 10) { const pts = []; for (let i = 0; i <= n; i++) { const t = 2 * Math.PI * i / n; pts.push([+(z.lng + Math.sin(t) * z.rM / 108500).toFixed(6), +(z.lat + Math.cos(t) * z.rM / 111000).toFixed(6)]); } return [pts]; }
-app.get('/api/route', async (req, res) => {
+app.get('/api/route', wrap(async (req, res) => {
   const a = [num(req.query.fromLat), num(req.query.fromLng)], b = [num(req.query.toLat), num(req.query.toLng)];
-  if (a.concat(b).some((x) => x == null) || !inPattaya(...a) || !inPattaya(...b)) return res.status(400).json({ error: 'จุดเริ่มและปลายทางต้องอยู่ในพื้นที่พัทยา/บางละมุง' });
+  if (a.concat(b).some((x) => x == null) || !inPattaya(...a) || !inPattaya(...b)) return res.status(400).json({ error: S('err.routeoutside', 'จุดเริ่มและปลายทางต้องอยู่ในพื้นที่พัทยา/บางละมุง') });
   const zones = floodZones(); let routes = [], engine;
   try {
     if (process.env.ORS_API_KEY) {
@@ -254,13 +446,14 @@ app.get('/api/route', async (req, res) => {
       const MOD = { left: 'ซ้าย', right: 'ขวา', 'slight left': 'ซ้ายเล็กน้อย', 'slight right': 'ขวาเล็กน้อย', 'sharp left': 'ซ้ายหักศอก', 'sharp right': 'ขวาหักศอก', straight: 'ตรง', uturn: 'กลับรถ' };
       routes = j.routes.map((r) => ({ coords: r.geometry.coordinates, distance: r.distance, duration: r.duration, steps: r.legs.flatMap((l) => l.steps.map((s) => ({ text: `${TH[s.maneuver.type] || s.maneuver.type} ${MOD[s.maneuver.modifier] || ''} ${s.name ? '· ' + s.name : ''}`.replace(/\s+/g, ' ').trim(), distance: s.distance }))) }));
     }
-  } catch (e) { return res.status(502).json({ error: 'บริการคำนวณเส้นทางไม่ตอบสนอง: ' + e.message, zones }); }
+  } catch (e) { return res.status(502).json({ error: S('err.routefail', 'บริการคำนวณเส้นทางไม่ตอบสนอง') + ': ' + e.message, zones }); }
   routes.forEach((r) => { r.floodHits = hits(r.coords, zones); });
   const order = [...routes].sort((x, y) => x.floodHits.length - y.floodHits.length || x.duration - y.duration);
   const best = order[0]; const avoids = best && best.floodHits.length === 0;
   const via = best ? [0.33, 0.66].map((f) => best.coords[Math.floor(best.coords.length * f)]).map(([lng, lat]) => `${lat.toFixed(5)},${lng.toFixed(5)}`).join('|') : '';
   const gmaps = `https://www.google.com/maps/dir/?api=1&origin=${a.join(',')}&destination=${b.join(',')}&travelmode=driving${via ? '&waypoints=' + encodeURIComponent(via) : ''}`;
-  res.json({ ok: true, engine, avoids, warning: avoids ? null : (zones.length ? 'ไม่พบเส้นทางที่เลี่ยงจุดน้ำท่วมได้ทั้งหมด — เส้นทางนี้ผ่านจุดเสี่ยงน้อยที่สุด ใช้ความระมัดระวัง' : null), zonesCount: zones.length, zones, best, alternatives: order.slice(1), gmaps });
-});
-app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
-app.listen(PORT, () => console.log(`Pattaya flood center on http://localhost:${PORT}  (staff password ${process.env.STAFF_PASSWORD ? 'from env' : 'default: pattaya1337'})`));
+  res.json({ ok: true, engine, avoids, warning: avoids ? null : (zones.length ? S('map.warnnoavoid', 'ไม่พบเส้นทางที่เลี่ยงจุดน้ำท่วมได้ทั้งหมด — เส้นทางนี้ผ่านจุดเสี่ยงน้อยที่สุด ใช้ความระมัดระวัง') : null), zonesCount: zones.length, zones, best, alternatives: order.slice(1), gmaps });
+}));
+app.get('*', renderIndex);
+app.use((err, req, res, next) => { console.error(err); res.status(500).json({ error: 'เกิดข้อผิดพลาดในระบบ' }); });
+init().then(() => app.listen(PORT, () => console.log(`Pattaya flood center on http://localhost:${PORT} · storage=${store.kind} · admin user "${ADMIN_USERNAME}"`))).catch((e) => { console.error('startup failed', e); process.exit(1); });
