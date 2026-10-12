@@ -400,4 +400,10 @@
 "weather.rainin.title":"24-h rainfall — rain gauges inside Pattaya City",
 "weather.rainin.none":"No rain-gauge data inside Pattaya City right now",
 "weather.wlsrc":"Sources: National Hydroinformatics Data Center (HII) and citizen reports on this site — no estimates",
-"weather.tambon":"Tambon "}
+"weather.tambon":"Tambon ",
+"road.pending":"⏳ Awaiting approval",
+"road.rejected":"✖ Not approved",
+"road.reason":"Reason",
+"road.submitted":"Submitted — it will appear on the public map after an admin approves it",
+"staff.roads.hint2":"Tap the map to place points along the road, then submit — staff submissions appear on the public map and are avoided in routing only after an admin approves them (admins publish immediately)",
+"road.err.reason":"Please give a reason for rejecting"}

@@ -44,6 +44,7 @@ async function init() {
   const seed = require('./seed-contacts');
   db.contacts ||= JSON.parse(JSON.stringify(seed));
   for (const k of ['reports', 'requests', 'missing', 'lostfound', 'audit', 'roads', 'users']) db[k] ||= [];
+  for (const w of db.roads) if (!w.approval) { w.approval = 'approved'; w.approvedBy ||= 'migration'; w.approvedAt ||= w.createdAt; } // road approval workflow: pre-existing roads stay live
   db.seq ||= 1000; db.texts ||= {}; db.i18n ||= {}; for (const l of ['en', 'zh']) db.i18n[l] ||= {};
   db.geofence = { ...GEO_DEFAULT, ...(db.geofence || {}) };
   db.moderation = { ...JSON.parse(JSON.stringify(MOD_DEFAULT)), ...(db.moderation || {}) };
@@ -286,6 +287,9 @@ function findDup(coll, pred) { const A = db.antispam; if (!A.on || !A.dedupe) re
 function confirmDup(x) { x.confirms = (x.confirms || 1) + 1; x.lastConfirmedAt = new Date().toISOString(); asStats.merged++; save(); return x; }
 
 const visible = (arr) => arr.filter((x) => x.status !== 'hidden');
+// Roads: staff submissions are 'pending' until an admin/superadmin approves; only approved roads are public or used for routing.
+const liveRoads = () => visible(db.roads).filter((w) => w.approval === 'approved');
+const pendingRoads = () => db.roads.filter((w) => w.approval === 'pending').length;
 
 // ---------- moderation ----------
 const M = () => db.moderation;
@@ -449,7 +453,7 @@ app.get('/api/staff/data', staff, (req, res) => res.json({ requests: [...db.requ
 function afterChange(c, item) {
   if (item) broadcast('staff:update', { coll: c, item }, true);
   if (c === 'requests' && item) broadcast('request', publicRequest(item)); if (c === 'reports' && item) broadcast('report', publicReport(item));
-  if (c === 'roads') broadcast('roads', visible(db.roads)); if (['areas', 'health', 'emergency'].includes(c)) broadcast('contacts', db.contacts);
+  if (c === 'roads') { broadcast('roads', liveRoads()); broadcast('staff:roadq', { total: pendingRoads() }, true); } if (['areas', 'health', 'emergency'].includes(c)) broadcast('contacts', db.contacts);
   if (['cctv', 'links'].includes(c)) broadcast('cms', { coll: c }); if (c === 'lostfound') broadcast('lostfound', {});
 }
 function setStatus(req, c, r, status, note) {
@@ -481,12 +485,23 @@ app.put('/api/staff/contacts', admin, (req, res) => {
   for (const k of ['health', 'emergency']) if (Array.isArray(b[k])) db.contacts[k] = b[k].map((x) => ({ id: clean(x.id, 30) || newId(k === 'health' ? 'H' : 'E'), name: clean(x.name, 120), phone: fix(x.phone), note: clean(x.note, 200), verified: !!x.verified, source: clean(x.source, 200) }));
   audit(req, 'contacts', 'contacts'); save(); broadcast('contacts', db.contacts); res.json({ ok: true, contacts: db.contacts });
 });
-app.get('/api/roads', (req, res) => res.json(visible(db.roads)));
+app.get('/api/roads', (req, res) => res.json(liveRoads()));
+// staff view: all approved + own pending/rejected; admins see everything
+app.get('/api/staff/roads', staff, (req, res) => res.json(db.roads.filter((w) => RANK[req.user.role] >= RANK.admin || w.approval === 'approved' || w.byUser === req.user.username).slice().reverse()));
+app.get('/api/admin/roads/queue', admin, (req, res) => res.json({ pending: db.roads.filter((w) => w.approval === 'pending').slice().reverse(), recent: db.roads.filter((w) => w.approval !== 'pending' && w.approvedAt).sort((a, b) => String(b.approvedAt).localeCompare(String(a.approvedAt))).slice(0, 30), total: pendingRoads() }));
+app.post('/api/admin/roads/:id/:act(approve|reject)', admin, (req, res) => {
+  const w = db.roads.find((x) => x.id === req.params.id); if (!w) return res.status(404).json({ error: 'ไม่พบ' });
+  const ok = req.params.act === 'approve', reason = clean(req.body?.reason, 300);
+  if (!ok && !reason) return res.status(400).json({ error: S('road.err.reason', 'กรุณาระบุเหตุผลที่ไม่อนุมัติ') });
+  Object.assign(w, { approval: ok ? 'approved' : 'rejected', approvedBy: req.user.name || req.user.username, approvedAt: new Date().toISOString(), reason: ok ? '' : reason });
+  audit(req, ok ? 'road-approve' : 'road-reject', 'roads', w.id, w.title + (reason ? ' — ' + reason : '')); save(); afterChange('roads', w); res.json({ ok: true, item: w });
+});
 app.post('/api/staff/roads', staff, (req, res) => {
   const b = req.body || {}; const pts = (Array.isArray(b.points) ? b.points : []).map((p) => [num(p[0]), num(p[1])]).filter((p) => p[0] != null && p[1] != null && inPattaya(p[0], p[1]));
   if (pts.length < 2) return res.status(400).json({ error: S('err.road2', 'วาดอย่างน้อย 2 จุด') });
-  const r = { id: newId('W'), type: b.type === 'closed' ? 'closed' : 'detour', title: clean(b.title, 100) || (b.type === 'closed' ? S('map.closed', 'ถนนปิด') : S('map.detour', 'เส้นทางเลี่ยง')), note: clean(b.note, 300), points: pts.slice(0, 300), status: 'open', by: req.staff.n, createdAt: new Date().toISOString() };
-  db.roads.push(r); audit(req, 'create', 'roads', r.id, r.title); save(); afterChange('roads', r); res.json({ ok: true, item: r });
+  const r = { id: newId('W'), type: b.type === 'closed' ? 'closed' : 'detour', title: clean(b.title, 100) || (b.type === 'closed' ? S('map.closed', 'ถนนปิด') : S('map.detour', 'เส้นทางเลี่ยง')), note: clean(b.note, 300), points: pts.slice(0, 300), status: 'open', by: req.staff.n, byUser: req.user.username, createdAt: new Date().toISOString() };
+  const boss = RANK[req.user.role] >= RANK.admin; Object.assign(r, boss ? { approval: 'approved', approvedBy: req.staff.n, approvedAt: r.createdAt } : { approval: 'pending' });
+  db.roads.push(r); audit(req, boss ? 'create' : 'road-submit', 'roads', r.id, r.title + (boss ? '' : ' (รออนุมัติ)')); save(); afterChange('roads', r); res.json({ ok: true, item: r, pending: !boss });
 });
 
 // ---------- back-office: generic collections ----------
@@ -518,7 +533,7 @@ app.post('/api/admin/c/:coll', admin, (req, res) => {
   const c = req.params.coll, C = COLLS[c]; if (!C || !C.create) return res.status(404).end(); const b = req.body || {}; const r = {};
   for (const f of C.fields) r[f.k] = coerce(f, b[f.k]);
   if (c === 'areas') { r.id = String(r.id || '').toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'area' + (++db.seq); if (db.contacts.areas.some((a) => a.id === r.id)) return res.status(400).json({ error: 'รหัสพื้นที่ซ้ำ' }); } else r.id = newId(C.prefix);
-  if (C.statuses) r.status = C.statuses[0]; r.createdAt = new Date().toISOString();
+  if (C.statuses) r.status = C.statuses[0]; r.createdAt = new Date().toISOString(); if (c === 'roads') Object.assign(r, { approval: 'approved', approvedBy: req.user.name || req.user.username, approvedAt: r.createdAt, byUser: req.user.username, points: [] });
   if (!r.name && !r.title) return res.status(400).json({ error: 'กรอกชื่อ' });
   C.arr().push(r); audit(req, 'create', c, r.id, r.name || r.title); save(); afterChange(c, r); res.json({ ok: true, item: r });
 });
@@ -564,7 +579,7 @@ function exportAll() {
   const pick = (r, keys) => Object.fromEntries(keys.map((k) => [k, Array.isArray(r[k]) ? r[k].join(', ') : r[k] ?? '']));
   const reports = db.reports.map((r) => ({ ...pick(r, ['id', 'createdAt', 'areaName', 'level', 'note', 'lat', 'lng', 'status', 'mod', 'modBy', 'modAt', 'cleared']), levelText: LEVELS()[r.level] || '', confirms: r.confirms || 1, votesYes: r.votes?.yes?.length || 0, votesNo: r.votes?.no?.length || 0, cm: LEVEL_CM[r.level] ?? '', photo: r.photo ? 1 : 0 }));
   const requests = db.requests.map((r) => ({ ...pick(r, ['id', 'createdAt', 'kind', 'areaName', 'name', 'people', 'needs', 'address', 'note', 'assignee', 'priority', 'status', 'lat', 'lng', 'updatedAt']), phone: maskPhone(r.phone) }));
-  const roads = db.roads.map((r) => pick(r, ['id', 'createdAt', 'type', 'title', 'note', 'status', 'lat', 'lng']));
+  const roads = db.roads.map((r) => ({ ...pick(r, ['id', 'createdAt', 'type', 'title', 'note', 'status', 'approval', 'reason', 'by', 'approvedBy', 'approvedAt']), lat: r.points?.[0]?.[0] ?? '', lng: r.points?.[0]?.[1] ?? '', points: (r.points || []).length }));
   const lostfound = db.lostfound.map((r) => ({ ...pick(r, ['id', 'createdAt', 'type', 'category', 'title', 'detail', 'place', 'status', 'mod']), phone: maskPhone(r.phone) }));
   const missing = db.missing.map((r) => ({ ...pick(r, ['id', 'createdAt', 'personName', 'age', 'lastSeen', 'description', 'reporterName', 'status', 'mod']), reporterPhone: maskPhone(r.reporterPhone) }));
   const c = db.contacts || {}, con = (t) => (x) => ({ group: t, ...pick(x, ['id', 'name', 'phone', 'note', 'verified', 'source']) });
@@ -573,7 +588,7 @@ function exportAll() {
   const audit = db.audit.slice(-2000).map((a) => pick(a, ['at', 'by', 'action', 'coll', 'id', 'detail']));
   const count = (a, k) => a.reduce((o, r) => ((o[r[k] || '-'] = (o[r[k] || '-'] || 0) + 1), o), {});
   const summary = { generatedAt: new Date().toISOString(), totals: { reports: reports.length, requests: requests.length, roads: roads.length, lostfound: lostfound.length, missing: missing.length, contacts: contacts.length, areas: areas.length, audit: db.audit.length },
-    reportsByLevel: count(reports, 'level'), reportsByArea: count(reports, 'areaName'), requestsByStatus: count(requests, 'status'), requestsByKind: count(requests, 'kind'), levels: LEVELS(), statusNames: STATUS_TEXT() };
+    roadsByApproval: count(roads, 'approval'), reportsByLevel: count(reports, 'level'), reportsByArea: count(reports, 'areaName'), requestsByStatus: count(requests, 'status'), requestsByKind: count(requests, 'kind'), levels: LEVELS(), statusNames: STATUS_TEXT() };
   return { summary, reports, requests, roads, lostfound, missing, contacts, areas, audit };
 }
 app.get('/api/export/all', (req, res) => {
@@ -684,7 +699,7 @@ app.put('/api/admin/moderation/settings', admin, (req, res) => {
 function floodZones() {
   const since = Date.now() - 24 * 3600e3, z = [];
   for (const r of db.reports) if (inRoute(r) && Date.parse(r.createdAt) > since && LEVEL_CM[r.level] >= 30) z.push({ lat: r.lat, lng: r.lng, rM: LEVEL_CM[r.level] >= 75 ? 250 : 150, label: S('map.zonereport', 'รายงาน') + ' ' + (LEVELS()[r.level] || '') + (r.mod === 'pending' ? ' (' + S('mod.pending', 'รอตรวจสอบ') + ')' : ''), id: r.id });
-  for (const w of db.roads) if (w.status !== 'hidden' && w.type === 'closed') for (let i = 0; i < w.points.length; i++) {
+  for (const w of liveRoads()) if (w.type === 'closed') for (let i = 0; i < w.points.length; i++) {
     z.push({ lat: w.points[i][0], lng: w.points[i][1], rM: 80, label: S('map.closed', 'ถนนปิด') + ': ' + w.title, id: w.id });
     if (i) { const a = w.points[i - 1], b = w.points[i]; const n = Math.ceil(km(a[0], a[1], b[0], b[1]) * 1000 / 100); for (let k = 1; k < n; k++) z.push({ lat: a[0] + (b[0] - a[0]) * k / n, lng: a[1] + (b[1] - a[1]) * k / n, rM: 80, label: S('map.closed', 'ถนนปิด') + ': ' + w.title, id: w.id }); }
   }

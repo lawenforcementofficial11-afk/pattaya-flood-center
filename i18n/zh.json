@@ -400,4 +400,10 @@
 "weather.rainin.title":"24小时累计雨量——芭提雅市内雨量站",
 "weather.rainin.none":"目前没有芭提雅市内雨量站数据",
 "weather.wlsrc":"来源：国家水信息数据中心（HII）及本站市民报告——无估算",
-"weather.tambon":"分区 "}
+"weather.tambon":"分区 ",
+"road.pending":"⏳ 待审批",
+"road.rejected":"✖ 未批准",
+"road.reason":"原因",
+"road.submitted":"已提交 — 管理员批准后才会显示在公开地图上",
+"staff.roads.hint2":"在地图上沿道路点击放置点，然后提交 — 工作人员提交的内容需管理员批准后才会显示在公开地图上并在路线计算中避开（管理员可直接发布）",
+"road.err.reason":"请填写不批准的原因"}
