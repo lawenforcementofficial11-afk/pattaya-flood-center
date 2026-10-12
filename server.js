@@ -193,13 +193,17 @@ async function forecast() {
   const stale = Date.now() - Date.parse(v.fetchedAt) > FC_TTL;
   return { ok: true, source: v.source, fetchedAt: v.fetchedAt, stale, totalMm: +total.toFixed(1), maxProb, startTime: i >= 0 ? h[i].t : null, label, color, hourly: h };
 }
+// Water levels — Pattaya City only. ThaiWater (api-v3) has no telemetered water-level station inside the city;
+// we only list stations inside the boundary (+2 km). Otherwise we say so, name the nearest one, and show real
+// in-city sources instead: ThaiWater 24-h rain gauges inside the city and citizen water reports. Nothing estimated.
+const WL_BUF = 2000, RAIN_BUF = 0;
 function waterLevels() {
   return cached('water' + ':' + L(), 10 * 60e3, async () => {
     const j = await getJSON('https://api-v3.thaiwater.net/api/v1/thaiwater30/public/waterlevel_load', 30000);
-    const L = j.waterlevel_data.data.filter((s) => s.station && s.station.tele_station_lat && s.waterlevel_msl != null);
-    const pick = L.map((s) => ({ s, d: km(s.station.tele_station_lat, s.station.tele_station_long, CENTER.lat, CENTER.lng) }))
-      .filter((x) => x.d < 90 && ['20', '21', '24'].includes(x.s.geocode.province_code)).sort((a, b) => a.d - b.d).slice(0, 8);
-    const out = pick.map(({ s, d }) => {
+    const all = j.waterlevel_data.data.filter((s) => s.station && s.station.tele_station_lat && s.waterlevel_msl != null)
+      .map((s) => ({ s, d: km(s.station.tele_station_lat, s.station.tele_station_long, CENTER.lat, CENTER.lng) })).sort((a, b) => a.d - b.d);
+    const near = all[0] ? { name: all[0].s.station.tele_station_name.th, amphoe: all[0].s.geocode.amphoe_name.th, province: all[0].s.geocode.province_name.th, distanceKm: Math.round(all[0].d) } : null;
+    const out = all.filter(({ s }) => insideCity(s.station.tele_station_lat, s.station.tele_station_long, WL_BUF)).map(({ s, d }) => {
       const wl = +s.waterlevel_msl, prev = s.waterlevel_msl_previous != null ? +s.waterlevel_msl_previous : null, bank = s.station.min_bank;
       const diff = bank != null ? +(wl - bank).toFixed(2) : null;
       let status = S('rain.st0', 'ปกติ'), sev = 0;
@@ -208,18 +212,25 @@ function waterLevels() {
       return { id: s.station.id, name: s.station.tele_station_name.th, code: s.station.tele_station_oldcode, province: s.geocode.province_name.th, amphoe: s.geocode.amphoe_name.th, tambon: s.geocode.tumbon_name.th,
         lat: s.station.tele_station_lat, lng: s.station.tele_station_long, distanceKm: Math.round(d), level: wl, bank, diff, status, sev, trend, measuredAt: s.waterlevel_datetime, agency: s.agency?.agency_shortname?.th?.trim() };
     }).sort((a, b) => b.sev - a.sev || a.distanceKm - b.distanceKm);
-    return { ok: true, source: 'คลังข้อมูลน้ำแห่งชาติ (api-v3.thaiwater.net)', fetchedAt: new Date().toISOString(), stations: out,
-      note: S('weather.stationnote', 'ไม่มีสถานีวัดระดับน้ำโทรมาตรในเขตเมืองพัทยา/บางละมุง จึงแสดงสถานีที่ใกล้ที่สุดใน ชลบุรี/ระยอง/ฉะเชิงเทรา') };
+    return { ok: true, source: 'คลังข้อมูลน้ำแห่งชาติ (api-v3.thaiwater.net)', fetchedAt: new Date().toISOString(), stations: out, nearest: near,
+      note: out.length ? '' : S('weather.nostation', 'ไม่มีสถานีวัดระดับน้ำโทรมาตรในเขตเมืองพัทยา (ข้อมูลคลังข้อมูลน้ำแห่งชาติ)') };
   });
 }
 function rainStations() {
   return cached('rain' + ':' + L(), 10 * 60e3, async () => {
     const j = await getJSON('https://api-v3.thaiwater.net/api/v1/thaiwater30/public/rain_24h', 30000);
-    const L = (j.data || []).filter((s) => s.geocode?.province_code === '20' && s.station?.tele_station_lat)
-      .map((s) => ({ name: s.station.tele_station_name.th, amphoe: s.geocode.amphoe_name.th, rain24h: +s.rain_24h, at: s.rainfall_datetime, lat: s.station.tele_station_lat, lng: s.station.tele_station_long, d: km(s.station.tele_station_lat, s.station.tele_station_long, CENTER.lat, CENTER.lng) }))
-      .filter((s) => s.d < 30).sort((a, b) => (inPattaya(b.lat, b.lng) - inPattaya(a.lat, a.lng)) || 0).filter((s, i, arr) => !arr.some((x) => inPattaya(x.lat, x.lng)) || inPattaya(s.lat, s.lng)).sort((a, b) => b.rain24h - a.rain24h).slice(0, 10).map(({ d, ...s }) => ({ ...s, distanceKm: Math.round(d) }));
-    return { ok: true, source: 'คลังข้อมูลน้ำแห่งชาติ (api-v3.thaiwater.net) ฝนสะสม 24 ชม.', fetchedAt: new Date().toISOString(), stations: L };
+    const L = (j.data || []).filter((s) => s.geocode?.province_code === '20' && s.station?.tele_station_lat && insideCity(+s.station.tele_station_lat, +s.station.tele_station_long, RAIN_BUF))
+      .map((s) => ({ name: s.station.tele_station_name.th, amphoe: s.geocode.amphoe_name.th, tambon: s.geocode.tumbon_name.th, agency: s.agency?.agency_shortname?.th?.trim(), rain24h: +s.rain_24h, at: s.rainfall_datetime, lat: +s.station.tele_station_lat, lng: +s.station.tele_station_long, distanceKm: Math.round(km(s.station.tele_station_lat, s.station.tele_station_long, CENTER.lat, CENTER.lng) * 10) / 10 }))
+      .sort((a, b) => b.rain24h - a.rain24h);
+    return { ok: true, source: 'คลังข้อมูลน้ำแห่งชาติ (api-v3.thaiwater.net) ฝนสะสม 24 ชม. — เฉพาะสถานีในเขตเมืองพัทยา', fetchedAt: new Date().toISOString(), stations: L };
   });
+}
+// citizen water reports inside the city, last 24 h (public ones only)
+function citizenLevels() {
+  const since = Date.now() - 24 * 3600e3, rs = db.reports.filter((r) => isPublic(r) && !r.cleared && Date.parse(r.createdAt) > since && inPattaya(r.lat, r.lng));
+  const by = {}; for (const r of rs) by[r.level] = (by[r.level] || 0) + 1;
+  const top = rs.reduce((m, r) => (LEVEL_CM[r.level] > (LEVEL_CM[m?.level] || -1) ? r : m), null);
+  return { count: rs.length, verified: rs.filter((r) => r.mod === 'verified').length, byLevel: Object.entries(by).sort((a, b) => LEVEL_CM[b[0]] - LEVEL_CM[a[0]]).map(([k, n]) => ({ level: k, text: LEVELS()[k], n })), max: top ? { level: top.level, text: LEVELS()[top.level], areaName: top.areaName, at: top.createdAt } : null, latest: rs.length ? rs[rs.length - 1].createdAt : null };
 }
 
 // ---------- app ----------
@@ -320,7 +331,7 @@ app.get('/api/config', (req, res) => res.json({ city: 'เมืองพัท�
 const HOTSPOTS = JSON.parse(fs.readFileSync(path.join(__dirname, 'geo/flood-hotspots.json'), 'utf8'));
 app.get('/api/hotspots', (req, res) => res.json({ note: HOTSPOTS.note, spots: HOTSPOTS.spots.map(({ sources, ...x }) => ({ ...x, label: L() === 'th' ? x.name : x.name_en })) }));
 app.get('/api/forecast', wrap(async (req, res) => res.json(await forecast())));
-app.get('/api/water', wrap(async (req, res) => res.json(await waterLevels())));
+app.get('/api/water', wrap(async (req, res) => { const w = await waterLevels(); const r = await rainStations(); res.json({ ...w, rainInside: r.ok ? r.stations : [], citizen: citizenLevels() }); }));
 app.get('/api/rain', wrap(async (req, res) => res.json(await rainStations())));
 app.get('/api/events', (req, res) => {
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });

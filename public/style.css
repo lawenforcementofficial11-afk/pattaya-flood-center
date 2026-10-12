@@ -52,3 +52,4 @@ main{max-width:1080px}.card{border-radius:var(--radius);box-shadow:0 1px 2px #00
 @media(max-width:520px){.ebar{gap:6px;padding:7px 6px;flex-wrap:nowrap}.ebl{display:none}.ebar a{min-width:0;flex:1;padding:4px 6px}.ebar a b{font-size:22px}.ebar a small{font-size:10.5px;white-space:nowrap}}
 .top{z-index:1200}
 .lgcirc{display:inline-block;width:14px;height:14px;border-radius:50%;vertical-align:middle;background:conic-gradient(#ca8a04 0 25%,#ea580c 0 50%,#dc2626 0 75%,#9f1239 0);opacity:.6;border:1px solid #0003}
+.wlnote{display:flex;gap:8px;align-items:flex-start;background:#ecfeff;border:1px solid #a5f3fc;border-radius:12px;padding:10px;font-size:15px}.wlnote .ic{color:#0e7490}

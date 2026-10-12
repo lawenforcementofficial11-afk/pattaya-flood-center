@@ -93,3 +93,10 @@ Off by default; records marked ทดสอบ / ข้อมูลตัวอ�
 ## Look
 - Pattaya City seal (Wikimedia Commons "File:Pattaya seal.png", originally from pattaya.go.th) is stored at `public/pattaya-seal.png`, with icons generated at 32/180/192/512. Admins can replace it with the logo URL setting or POST /api/admin/logo.
 - Noto Sans Thai font. Sea/turquoise, sunset orange and sand palette, with red reserved for emergencies. Big emergency call bar, an icon action grid as the `actions` home section (reorderable), inline SVG icons, and a bottom nav on mobile.
+
+## Water levels: Pattaya City only
+- ThaiWater api-v3 (`waterlevel_load`) has no telemetered water-level station inside Pattaya City. The nearest is บ้านเขาโบสถ์, Rayong (RID), about 43 km away.
+- `/api/water` returns only stations inside the boundary (+2 km). When there are none, it returns the nearest station's name and distance (shown as a note, not as data), plus two in-city sources:
+  - ThaiWater 24-h rain gauges inside the boundary
+  - citizen water reports inside the city from the last 24 h
+- Reservoirs (Map Prachan, Chak Nok, Huai Yai) and tide gauges are not shown, because no working public API for them was found. Nothing is estimated.
