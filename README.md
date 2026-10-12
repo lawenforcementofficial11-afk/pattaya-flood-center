@@ -100,3 +100,7 @@ Off by default; records marked ทดสอบ / ข้อมูลตัวอ�
   - ThaiWater 24-h rain gauges inside the boundary
   - citizen water reports inside the city from the last 24 h
 - Reservoirs (Map Prachan, Chak Nok, Huai Yai) and tide gauges are not shown, because no working public API for them was found. Nothing is estimated.
+
+## Supervisors' Google Sheet (full-data export)
+- `GET /api/export/all` — every dataset as JSON (`?dataset=reports&format=csv` for one CSV). Auth: `EXPORT_TOKEN` env (≥24 chars) via `x-export-token` header or `?token=`, or an admin/superadmin session. Citizens' phones are masked to the last 4 digits; IPs, device ids, vote fingerprints and photos are never included.
+- Sheet sync: `scripts/google-sheet-sync.gs` (Apps Script bound to the sheet, hourly trigger). Set script properties `EXPORT_URL` + `EXPORT_TOKEN`, run `installHourlyTrigger()` once.
