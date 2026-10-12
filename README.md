@@ -79,3 +79,17 @@ Off by default; records marked ทดสอบ / ข้อมูลตัวอ�
 - Queue: /admin#mod (pending + held, approve/reject/hold, bulk actions, map, photo; nav badge updates via SSE).
 - Routing avoidance uses **verified + pending** reports, because sending someone around an unconfirmed flood costs little and sending them into water is dangerous. It ignores held, rejected and possibly-cleared reports.
 - Migration: existing records with no `mod` become `verified` at startup. This works for both the file and Postgres stores, since they share the same JSON document.
+
+## Jurisdiction: Pattaya City mainland only
+- `geo/pattaya-boundary.geojson`: OSM relation 12645794 (เมืองพัทยา), fetched with Nominatim. Only the mainland polygon is kept; Ko Lan, Ko Sak and Ko Khrok are excluded.
+- Public submissions (water reports and help requests with a location or area) are checked server-side with point-in-polygon plus an admin buffer (default 300 m; Admin → ตั้งค่าเว็บ → เขตรับเรื่อง). Submissions outside the boundary get a translated message that names nearby agencies.
+- Maps draw the boundary and set maxBounds. Nominatim search is limited to the city bbox and the polygon. Areas outside the city are hidden from the pickers. Routing endpoints must be inside the city.
+- `geo/flood-hotspots.json`: recurring flood spots taken from news reports. Coordinates are approximate. The sources are kept in the file only and are not exposed by `/api/hotspots`. The spots are shown as a map layer and are not used in routing.
+
+## Forecast
+- Fetched server-side only and cached for 30 min, in memory and in the DB (`fcCache`), so a restart reuses it. Only one request runs at a time, with exponential backoff on 429 and errors.
+- Falls back to MET Norway (api.met.no, with a proper User-Agent). If every provider fails, the last cached data is served with "อัปเดตล่าสุดเมื่อ …".
+
+## Look
+- Pattaya City seal (Wikimedia Commons "File:Pattaya seal.png", originally from pattaya.go.th) is stored at `public/pattaya-seal.png`, with icons generated at 32/180/192/512. Admins can replace it with the logo URL setting or POST /api/admin/logo.
+- Noto Sans Thai font. Sea/turquoise, sunset orange and sand palette, with red reserved for emergencies. Big emergency call bar, an icon action grid as the `actions` home section (reorderable), inline SVG icons, and a bottom nav on mobile.

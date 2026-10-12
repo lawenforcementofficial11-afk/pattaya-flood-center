@@ -36,6 +36,18 @@ document.addEventListener('click', async (e) => { const b = e.target.closest?.('
   try { await api('/api/reports/' + encodeURIComponent(id) + '/vote', { method: 'POST', body: { v: b.dataset.vote } }); const v = JSON.parse(localStorage.getItem('pfc_votes') || '{}'); v[id] = b.dataset.vote; localStorage.setItem('pfc_votes', JSON.stringify(v)); $('.vmsg', box).textContent = C.cfg?.texts?.['mod.vote.done'] || 'ขอบคุณ — บันทึกการยืนยันของคุณแล้ว'; }
   catch (err) { $('.vmsg', box).innerHTML = `<span class="err">${esc(err.message)}</span>`; if (/429/.test(err.message)) box.querySelectorAll('button').forEach((x) => (x.disabled = false)); } });
 const modMsg = (r) => (r.mod === 'held' || (r.mod === 'pending' && r.public === false) ? `<p class="muted">${T('mod.msg.held', 'รายงานของคุณจะแสดงต่อสาธารณะหลังเจ้าหน้าที่ตรวจสอบ')}</p>` : r.mod === 'pending' ? `<p class="muted">${T('mod.msg.pending', 'แสดงบนแผนที่แล้วในสถานะ "รอตรวจสอบ" — จะยืนยันเมื่อมีผู้อื่นยืนยันหรือเจ้าหน้าที่ตรวจสอบ')}</p>` : '');
+// ---------- icon set (inline SVG, Lucide-style strokes; no emoji) ----------
+const IC = { sos: '<path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>',
+  evac: '<path d="M3 21h18"/><path d="M5 21V8l7-5 7 5v13"/><path d="M9 21v-6h6v6"/>', help: '<path d="M20 12v10H4V12"/><path d="M2 7h20v5H2z"/><path d="M12 22V7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/>',
+  med: '<path d="M11 2a2 2 0 0 0-2 2v5H4a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2h5v5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2v-5h5a2 2 0 0 0 2-2v-2a2 2 0 0 0-2-2h-5V4a2 2 0 0 0-2-2z"/>',
+  water: '<path d="M2 6c.6.5 1.2 1 2.5 1C7 7 7 5 9.5 5c2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M2 12c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M2 18c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/>',
+  route: '<circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/>', map: '<path d="M14.1 6 9.9 4 3 7v13l6.9-3 4.2 2L21 16V3z"/><path d="M9.9 4v13"/><path d="M14.1 6v13"/>',
+  phone: '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/>',
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>', cctv: '<path d="m16 13 5.2 3.1a.5.5 0 0 0 .8-.4V8.3a.5.5 0 0 0-.8-.4L16 11"/><rect x="2" y="6" width="14" height="12" rx="2"/>',
+  clock: '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>', users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/><path d="M16 3.1a4 4 0 0 1 0 7.8"/>',
+  tag: '<path d="M12.6 2.6A2 2 0 0 0 11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4z"/><circle cx="7.5" cy="7.5" r="1"/>', home: '<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
+  rain: '<path d="M4 14.9A7 7 0 1 1 15.7 8h1.8a4.5 4.5 0 0 1 2.5 8.2"/><path d="M16 14v6"/><path d="M8 14v6"/><path d="M12 16v6"/>' };
+const ico = (k, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IC[k] || ''}</svg>`;
 const LVCOL = { dry: '#16a34a', ankle: '#ca8a04', knee: '#ea580c', waist: '#dc2626', chest: '#9f1239', roof: '#4c0519' };
 const km = (a, b, c, d) => Math.hypot((a - c) * 111, (b - d) * 108.5);
 const stName = (s) => esc(C.cfg?.statusNames?.[s] || s);
@@ -43,7 +55,10 @@ async function cfg(force) { if (!C.cfg || force) { C.cfg = await api('/api/confi
 function chrome() {
   const s = C.cfg.settings || {}, b = s.banner || {};
   $('#banner').innerHTML = b.on && b.text ? `<div class="banner ${esc(b.level)}">${esc(b.text)}</div>` : '';
-  $('#ebar').innerHTML = `<div class="ebar">${T('site.ebar', 'ฉุกเฉิน โทร')} <a href="tel:1669">1669</a>·<a href="tel:1784">1784</a>·<a href="tel:1337">1337</a> ${T('site.ebar2', '(เมืองพัทยา)')}</div>`;
+  $('#ebar').innerHTML = `<div class="ebar"><span class="ebl">${ico('phone')} ${T('site.ebar', 'ฉุกเฉิน โทร')}</span><a href="tel:1669"><b>1669</b><small>${T('site.ebar.1669', 'เจ็บป่วยฉุกเฉิน')}</small></a><a href="tel:1784"><b>1784</b><small>${T('site.ebar.1784', 'ปภ. ภัยพิบัติ')}</small></a><a href="tel:1337"><b>1337</b><small>${T('site.ebar2', '(เมืองพัทยา)')}</small></a></div>`;
+  const bn = $('#bnav'); if (bn) { const cur = location.hash.replace(/^#\/?/, '').split('?')[0];
+    bn.innerHTML = [['', 'home', T('bnav.home', 'หน้าหลัก')], ['report', 'water', T('bnav.report', 'แจ้งน้ำท่วม')], ['help?kind=evacuate', 'sos', T('bnav.help', 'ขอช่วยเหลือ'), 'red'], ['map', 'map', T('bnav.map', 'แผนที่')], ['status', 'search', T('bnav.status', 'ติดตามเคส')]]
+      .map(([h, i, l, c]) => `<a href="#/${h}" class="${c || ''} ${cur === h.split('?')[0] ? 'on' : ''}">${ico(i)}<span>${l}</span></a>`).join(''); }
 }
 function tiles(m) { L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(m);
   const g = C.cfg?.geo; if (g?.boundary) { const [s, w, n, e] = g.bbox; m.setMaxBounds([[s - 0.06, w - 0.08], [n + 0.06, e + 0.08]]); m.options.minZoom = 11;
@@ -72,13 +87,27 @@ const listeners = new Set(); const on = (fn) => { listeners.add(fn); return fn; 
 const routes = {
   '': home, sos: (q) => helpForm('food'), help: (q) => helpForm(q.kind || 'evacuate'), report, status, area, map: mapPage, updates, missing, 'lost-found': lostFound, cctv, weather, staff: staffPage, admin: () => { location.href = '/admin'; },
 };
-async function render() { listeners.clear(); const [p, qs] = location.hash.replace(/^#\/?/, '').split('?'); const q = Object.fromEntries(new URLSearchParams(qs || '')); window.scrollTo(0, 0); app.innerHTML = `<p class="muted">${C.cfg ? T('nav.loading', 'กำลังโหลด…') : '…'}</p>`; try { await cfg(); await (routes[p] || home)(q); document.querySelector('#go')?.setAttribute('data-pub', ''); if (['report', 'sos', 'help', 'missing', 'lost-found'].includes(p)) armForm(); } catch (e) { app.innerHTML = `<p class="err">${esc(e.message)}</p>` + back(); } }
+async function render() { listeners.clear(); const [p, qs] = location.hash.replace(/^#\/?/, '').split('?'); const q = Object.fromEntries(new URLSearchParams(qs || '')); window.scrollTo(0, 0); app.innerHTML = `<p class="muted">${C.cfg ? T('nav.loading', 'กำลังโหลด…') : '…'}</p>`; try { await cfg(); chrome(); await (routes[p] || home)(q); document.querySelector('#go')?.setAttribute('data-pub', ''); if (['report', 'sos', 'help', 'missing', 'lost-found'].includes(p)) armForm(); } catch (e) { app.innerHTML = `<p class="err">${esc(e.message)}</p>` + back(); } }
 addEventListener('hashchange', render); render();
 
 async function home() {
   const cf = await cfg(), c = cf.contacts; const served = c.areas.filter((a) => a.served).map((a) => a.name);
   document.title = cf.texts?.['site.title'] || 'ศูนย์ช่วยเหลือน้ำท่วมเมืองพัทยา | ระดับน้ำ ขอความช่วยเหลือ';
   const S = {
+   actions: `<section class="actions" aria-label="${T('home.actions.label', 'บริการหลัก')}">${[
+     ['#/help?kind=evacuate', 'evac', 'red', T('home.act.evac', 'ขออพยพ / ติดอยู่'), T('home.act.evac.d', 'ส่งตำแหน่งให้ทีมกู้ภัยทันที')],
+     ['#/help?kind=medical', 'med', 'red', T('home.act.med', 'ผู้ป่วย / ต้องการยา'), T('home.act.med.d', 'แจ้งผู้ป่วยติดเตียง ยาขาด')],
+     ['#/sos', 'help', 'orange', T('home.act.help', 'ขอความช่วยเหลือ'), T('home.act.help.d', 'อาหาร น้ำดื่ม ถุงยังชีพ')],
+     ['#/report', 'water', 'sea', T('home.act.report', 'แจ้งน้ำท่วม'), T('home.act.report.d', 'บอกระดับน้ำตรงที่คุณอยู่')],
+     ['#/map', 'route', 'sea', T('home.act.route', 'เส้นทางเลี่ยงน้ำ'), T('home.act.route.d', 'หาเส้นทางที่ไม่ผ่านจุดท่วม')],
+     ['#/map', 'map', 'sea', T('home.act.map', 'แผนที่น้ำท่วม'), T('home.act.map.d', 'จุดท่วม จุดเสี่ยง ถนนปิด')],
+     ['#/?emg', 'phone', 'sand', T('home.act.phone', 'เบอร์โทรสำคัญ'), T('home.act.phone.d', 'โรงพยาบาล กู้ภัย เทศกิจ')],
+     ['#/status', 'search', 'sand', T('home.act.status', 'ติดตามเคส'), T('home.act.status.d', 'เลขเคส + เบอร์ 4 ตัวท้าย')],
+     ['#/cctv', 'cctv', 'sand', T('home.act.cctv', 'กล้อง CCTV'), T('home.act.cctv.d', 'ดูสภาพถนนสด')],
+     ['#/updates', 'clock', 'sand', T('home.act.updates', 'อัปเดตล่าสุด'), T('home.act.updates.d', 'รายงานน้ำจากประชาชน')],
+     ['#/missing', 'users', 'sand', T('home.act.missing', 'ตามหาคน'), T('home.act.missing.d', 'ญาติติดต่อไม่ได้')],
+     ['#/lost-found', 'tag', 'sand', T('home.act.lf', 'ของหาย–ได้คืน'), T('home.act.lf.d', 'สัตว์เลี้ยง เอกสาร')],
+   ].map(([h, i, c, t, d]) => `<a class="act ${c}" href="${h}"${h === '#/?emg' ? ' onclick="event.preventDefault();document.getElementById(\'emg\')?.scrollIntoView({behavior:\'smooth\'})"' : ''}>${ico(i)}<b>${t}</b><small>${d}</small></a>`).join('')}</section>`,
    food: `<a class="card big food" href="#/sos"><h2>${T('home.food.title', '🍚 ขออาหาร / ถุงยังชีพ')}</h2><div>${T('home.food.desc', 'ข้าว น้ำดื่ม ถุงยังชีพ ยา อาหารหมาแมว กรอกสั้น ๆ ส่งถึงผู้ประสานงานพื้นที่ของคุณ')}</div><div class="muted">${T('home.food.served', 'เปิดรับเฉพาะ:')} ${esc(served.join(' · '))}</div></a>`,
    contact: `<div class="grid two">
    <div class="card"><h2>${T('home.contact.title', '☎️ ติดต่อเทศบาล / ผู้ประสานงานพื้นที่')}</h2><div class="muted">${T('home.contact.desc', 'เลือกพื้นที่ของคุณ แล้วโทรหาผู้ประสานงานประจำพื้นที่ได้เลย')}</div>
@@ -101,7 +130,7 @@ async function home() {
    <a href="#/weather"><b>${T('home.more.weather', 'พยากรณ์อากาศ ฝน ลม')}</b><br><span class="muted">${T('home.more.weather.d', 'กราฟรายชั่วโมง 24 ชม. และเรดาร์ฝน')}</span></a>
    ${(cf.links || []).map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener"><b>${esc(l.title)}</b><br><span class="muted">${esc(l.note || '')}</span></a>`).join('')}
    <p class="muted">${T('home.more.note', 'เปิดในแท็บใหม่ ข้อมูลเป็นของเจ้าของเว็บแต่ละแห่ง')}</p></div>`,
-   emergency: `<div class="card"><h2>${T('home.emg.title', '📞 เบอร์ฉุกเฉิน')}</h2><ul class="list">${c.emergency.map((h) => `<li><span>${esc(h.name)}</span>${tel(h.phone)}</li>`).join('')}</ul>
+   emergency: `<div class="card" id="emg"><h2>${T('home.emg.title', '📞 เบอร์ฉุกเฉิน')}</h2><ul class="list">${c.emergency.map((h) => `<li><span>${esc(h.name)}</span>${tel(h.phone)}</li>`).join('')}</ul>
    <p class="muted">${T('home.emg.note1', 'รับแจ้งทางเว็บเฉพาะ')} ${esc(served.join(', '))} ${T('home.emg.note2', 'พื้นที่อื่นโทรเบอร์ฉุกเฉินด้านบน')}</p></div>`,
    stafflink: `<p style="text-align:center"><a class="btn alt" href="#/staff">${T('home.stafflink', '👮 เจ้าหน้าที่และทีมกู้ภัย เข้าสู่ระบบ')}</a></p>`,
   };
@@ -115,9 +144,9 @@ async function home() {
   if ($('#fc')) { loadForecast($('#fc')); loadWater($('#wl')); loadRain($('#rn')); }
 }
 async function loadForecast(el, full) {
-  const f = await api('/api/forecast'); if (!f.ok) return (el.innerHTML = `<p class="err">${T('weather.fcfail', 'ดึงพยากรณ์จาก Open-Meteo ไม่ได้')} (${esc(f.error)})</p>`);
+  const f = await api('/api/forecast'); if (!f.ok) return (el.innerHTML = `<p class="err">${T('weather.fcfail2', 'ยังไม่มีข้อมูลพยากรณ์ในขณะนี้ ลองใหม่ภายหลัง')} (${esc(f.error)})</p>`);
   const max = Math.max(1, ...f.hourly.map((h) => h.mm));
-  el.innerHTML = `<p><b>${T('weather.next24', 'ฝน 24 ชม. ข้างหน้า')}</b> <span class="badge" style="background:${f.color}">${esc(f.label)}</span><br>${T('weather.total', 'รวมประมาณ')} <b>${f.totalMm}</b> ${T('weather.mm', 'มม.')} · ${T('weather.maxprob', 'โอกาสสูงสุด')} <b>${f.maxProb}%</b> · ${f.startTime ? T('weather.start', 'เริ่มราว') + ' ' + fmt(f.startTime) : T('weather.norain', 'ไม่มีฝนที่วัดได้')}</p>
+  el.innerHTML = `<p class="muted fcsrc">${T('weather.updated', 'อัปเดตล่าสุดเมื่อ')} ${fmt(f.fetchedAt)} · ${esc(f.source)}</p><p><b>${T('weather.next24', 'ฝน 24 ชม. ข้างหน้า')}</b> <span class="badge" style="background:${f.color}">${esc(f.label)}</span><br>${T('weather.total', 'รวมประมาณ')} <b>${f.totalMm}</b> ${T('weather.mm', 'มม.')} · ${T('weather.maxprob', 'โอกาสสูงสุด')} <b>${f.maxProb == null ? '-' : f.maxProb + '%'}</b> · ${f.startTime ? T('weather.start', 'เริ่มราว') + ' ' + fmt(f.startTime) : T('weather.norain', 'ไม่มีฝนที่วัดได้')}</p>
    <div class="bars">${f.hourly.map((h) => `<div style="height:${h.prob || 0}%" title="${h.t.slice(11)} · ${h.mm} mm · ${h.prob}% · ${h.wind} km/h"><i style="height:${Math.min(100, (h.mm / max) * 100)}%"></i></div>`).join('')}</div>
    <div class="ticks">${[0, 6, 12, 18, 23].map((i) => `<span>${f.hourly[i]?.t.slice(11) || ''}</span>`).join('')}</div><p class="muted">${T('weather.legend', 'แท่งฟ้าอ่อน = โอกาสฝน · แท่งเข้ม = ปริมาณฝน')} (${T('weather.max', 'สูงสุด')} ${max.toFixed(1)} ${T('weather.mmh', 'มม./ชม.')}) · ${f.stale ? T('weather.stale', 'ข้อมูลเก่า (ดึงใหม่ไม่สำเร็จ)') : 'Open-Meteo ' + fmt(f.fetchedAt)}</p>
    ${full ? `<table><tr><th>${T('weather.col.time', 'เวลา')}</th><th>${T('weather.col.rain', 'ฝน มม.')}</th><th>${T('weather.col.prob', 'โอกาส')}</th><th>${T('weather.col.wind', 'ลม กม./ชม.')}</th></tr>${f.hourly.map((h) => `<tr><td>${h.t.slice(11)}</td><td>${h.mm}</td><td>${h.prob}%</td><td>${h.wind}</td></tr>`).join('')}</table>` : ''}`;

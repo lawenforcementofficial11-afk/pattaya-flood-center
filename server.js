@@ -33,9 +33,9 @@ const MOD_COLLS = ['reports', 'lostfound'];
 
 // ---------- storage ----------
 let db;
-const DEFAULT_SETTINGS = { logo: '🌊', logoUrl: '', primary: '#0369a1', header: '#0c4a6e', bg: '#f0f9ff',
+const DEFAULT_SETTINGS = { logo: '🌊', logoUrl: '/pattaya-seal.png', primary: '#0e7490', header: '#0b3c5d', bg: '#f7f3ea',
   banner: { on: false, text: '', level: 'warn' },
-  sections: ['food', 'contact', 'sos', 'report', 'near', 'services', 'situation', 'moreinfo', 'emergency', 'stafflink'].map((id) => ({ id, on: true })) };
+  sections: ['actions', 'food', 'contact', 'sos', 'report', 'near', 'services', 'situation', 'moreinfo', 'emergency', 'stafflink'].map((id) => ({ id, on: true })) };
 const SEED_CCTV = [{ title: 'กล้อง CCTV ทั่วไทย', url: 'https://cctv.maholan.net/', note: 'รวมกล้องสาธารณะทั่วประเทศ ค้นหา "พัทยา" / "ชลบุรี"' }, { title: 'ThaiWater', url: 'https://www.thaiwater.net/', note: 'ภาพสถานีโทรมาตร' }];
 const SEED_LINKS = [{ title: 'คลังข้อมูลน้ำแห่งชาติ (ThaiWater)', url: 'https://www.thaiwater.net/', note: 'สถานีวัดน้ำและฝนทั่วประเทศ' }, { title: 'กรมชลประทาน', url: 'https://bigdata-swoc.rid.go.th/pier/all', note: 'ระดับน้ำทั้งประเทศ' }, { title: 'กรมทรัพยากรน้ำ', url: 'https://telemetry.dwr.go.th/home?layerMapType=BASIN', note: 'สถานีโทรมาตรรายลุ่มน้ำ' }, { title: 'กรมอุตุนิยมวิทยา', url: 'https://weather.tmd.go.th/', note: 'เรดาร์ฝนและพยากรณ์' }];
 async function init() {
@@ -57,7 +57,8 @@ async function init() {
     db.reports.push({ id: newId('R'), areaId: 'central', areaName: 'พัทยากลาง', level: 'knee', lat: 12.9355, lng: 100.889, note: 'ข้อมูลตัวอย่าง', photo: null, status: 'new', confirms: 1, createdAt: now });
     db.roads.push({ id: newId('W'), type: 'closed', title: 'ข้อมูลตัวอย่าง: ถนนปิด', note: '', points: [[12.94, 100.887], [12.93, 100.886]], status: 'open', by: 'demo', createdAt: now }); console.log('DEMO_SEED=1: seeded demo data'); }
   db.settings = { ...JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), ...(db.settings || {}) };
-  const ids = db.settings.sections.map((s) => s.id); for (const s of DEFAULT_SETTINGS.sections) if (!ids.includes(s.id)) db.settings.sections.push({ ...s });
+  const ids = db.settings.sections.map((s) => s.id); for (const s of DEFAULT_SETTINGS.sections) if (!ids.includes(s.id)) s.id === 'actions' ? db.settings.sections.unshift({ ...s }) : db.settings.sections.push({ ...s });
+  { const st = db.settings; if (st.primary === '#0369a1' && st.header === '#0c4a6e' && st.bg === '#f0f9ff') Object.assign(st, { primary: DEFAULT_SETTINGS.primary, header: DEFAULT_SETTINGS.header, bg: DEFAULT_SETTINGS.bg }); if (!st.logoUrl && st.logo === '🌊') st.logoUrl = DEFAULT_SETTINGS.logoUrl; }
   db.cctvOverrides ||= {};
   db.cctv ||= SEED_CCTV.map((x) => ({ id: newId('V'), kind: 'link', ...x, status: 'open', createdAt: new Date().toISOString() }));
   db.links ||= SEED_LINKS.map((x) => ({ id: newId('K'), ...x, status: 'open', createdAt: new Date().toISOString() }));
@@ -159,18 +160,38 @@ async function getJSON(url, ms = 20000) {
 }
 const km = (a, b, c, d) => Math.hypot((a - c) * 111, (b - d) * 108.5);
 
-function forecast() {
-  return cached('forecast' + ':' + L(), 15 * 60e3, async () => {
-    const u = `https://api.open-meteo.com/v1/forecast?latitude=${CENTER.lat}&longitude=${CENTER.lng}&hourly=precipitation,precipitation_probability,wind_speed_10m&forecast_hours=24&timezone=Asia%2FBangkok`;
-    const j = await getJSON(u); const h = j.hourly;
-    const total = h.precipitation.reduce((s, x) => s + (x || 0), 0);
-    const maxProb = Math.max(...h.precipitation_probability.map((x) => x || 0));
-    const i = h.precipitation.findIndex((x) => x >= 0.1);
-    let label = S('rain.none', 'ไม่มีฝน'), color = '#16a34a';
-    if (total >= 0.5) { label = S('rain.light', 'ฝนเล็กน้อย'); color = '#0284c7'; } if (total >= 10) { label = S('rain.moderate', 'ฝนปานกลาง'); color = '#ca8a04'; } if (total >= 35) { label = S('rain.heavy', 'ฝนหนัก'); color = '#ea580c'; } if (total >= 90) { label = S('rain.veryheavy', 'ฝนหนักมาก'); color = '#dc2626'; }
-    return { ok: true, source: 'Open-Meteo', fetchedAt: new Date().toISOString(), totalMm: +total.toFixed(1), maxProb, startTime: i >= 0 ? h.time[i] : null, label, color,
-      hourly: h.time.map((t, k) => ({ t, mm: h.precipitation[k], prob: h.precipitation_probability[k], wind: h.wind_speed_10m[k] })) };
-  });
+// Forecast: server-side only (browsers never call Open-Meteo). 30-min cache kept in memory + DB (survives restarts),
+// one in-flight request, exponential backoff on 429/errors, MET Norway fallback, stale data served instead of an error.
+const FC_TTL = 30 * 60e3; let fcInflight = null; const fcBackoff = { 'open-meteo': { n: 0, until: 0 }, 'met.no': { n: 0, until: 0 } };
+const bkkHour = (iso) => new Date(Date.parse(iso) + 7 * 3600e3).toISOString().slice(0, 13) + ':00';
+async function fcOpenMeteo() {
+  const j = await getJSON(`https://api.open-meteo.com/v1/forecast?latitude=${CENTER.lat}&longitude=${CENTER.lng}&hourly=precipitation,precipitation_probability,wind_speed_10m&forecast_hours=24&timezone=Asia%2FBangkok`, 15000); const h = j.hourly;
+  return { source: 'Open-Meteo', hourly: h.time.map((t, k) => ({ t, mm: h.precipitation[k] || 0, prob: h.precipitation_probability[k], wind: h.wind_speed_10m[k] })) };
+}
+async function fcMetNo() {
+  const r = await fetch(`https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=${CENTER.lat.toFixed(4)}&lon=${CENTER.lng.toFixed(4)}`, { signal: AbortSignal.timeout(15000), headers: { 'user-agent': 'pattaya-flood-center/1.0 (https://pattaya-flood-center.onrender.com)' } });
+  if (!r.ok) throw new Error('HTTP ' + r.status); const j = await r.json(); const now = Date.now() - 3600e3;
+  const ts = j.properties.timeseries.filter((x) => Date.parse(x.time) >= now && x.data.next_1_hours).slice(0, 24);
+  return { source: 'MET Norway (api.met.no)', hourly: ts.map((x) => ({ t: bkkHour(x.time), mm: x.data.next_1_hours.details.precipitation_amount || 0, prob: x.data.next_1_hours.details.probability_of_precipitation ?? null, wind: +(x.data.instant.details.wind_speed * 3.6).toFixed(1) })) };
+}
+async function fcRefresh() {
+  const errs = [];
+  for (const [name, fn] of [['open-meteo', fcOpenMeteo], ['met.no', fcMetNo]]) {
+    const b = fcBackoff[name]; if (Date.now() < b.until) { errs.push(`${name}: backoff`); continue; }
+    try { const v = await fn(); if (!v.hourly.length) throw new Error('empty'); b.n = 0; b.until = 0; db.fcCache = { ...v, fetchedAt: new Date().toISOString() }; save(); return; }
+    catch (e) { b.n++; b.until = Date.now() + Math.min(2 * 3600e3, 5 * 60e3 * 2 ** (b.n - 1)) * (/429/.test(e.message) ? 1 : 0.5); errs.push(`${name}: ${e.message}`); console.warn('forecast', name, e.message); }
+  }
+  throw new Error(errs.join('; '));
+}
+async function forecast() {
+  const c = db.fcCache, fresh = c && Date.now() - Date.parse(c.fetchedAt) < FC_TTL; let err = null;
+  if (!fresh) { fcInflight ||= fcRefresh().finally(() => { fcInflight = null; }); try { await fcInflight; } catch (e) { err = e.message; } }
+  const v = db.fcCache; if (!v) return { ok: false, error: err || 'no data' };
+  const h = v.hourly, total = h.reduce((s, x) => s + (x.mm || 0), 0), maxProb = h.some((x) => x.prob != null) ? Math.max(...h.map((x) => x.prob || 0)) : null, i = h.findIndex((x) => x.mm >= 0.1);
+  let label = S('rain.none', 'ไม่มีฝน'), color = '#16a34a';
+  if (total >= 0.5) { label = S('rain.light', 'ฝนเล็กน้อย'); color = '#0284c7'; } if (total >= 10) { label = S('rain.moderate', 'ฝนปานกลาง'); color = '#ca8a04'; } if (total >= 35) { label = S('rain.heavy', 'ฝนหนัก'); color = '#ea580c'; } if (total >= 90) { label = S('rain.veryheavy', 'ฝนหนักมาก'); color = '#dc2626'; }
+  const stale = Date.now() - Date.parse(v.fetchedAt) > FC_TTL;
+  return { ok: true, source: v.source, fetchedAt: v.fetchedAt, stale, totalMm: +total.toFixed(1), maxProb, startTime: i >= 0 ? h[i].t : null, label, color, hourly: h };
 }
 function waterLevels() {
   return cached('water' + ':' + L(), 10 * 60e3, async () => {
@@ -214,7 +235,8 @@ function renderIndex(req, res) {
   const st = db.settings, h = fs.readFileSync(path.join(__dirname, 'public/index.html'), 'utf8');
   const out = h.replace('<html lang="th">', `<html lang="${{ th: 'th', en: 'en', zh: 'zh-CN' }[L()]}" data-lang="${L()}">`).replace(/\{\{T:([a-z0-9_.-]+)\|([^}]*)\}\}/g, (_, k, d) => escH(S(k, d)))
     .replace('{{THEME}}', `:root{--primary:${color(st.primary, '#0369a1')};--header:${color(st.header, '#0c4a6e')};--bg:${color(st.bg, '#f0f9ff')}}`)
-    .replace('{{LOGO}}', st.logoUrl && /^(https?:\/\/|\/)/.test(st.logoUrl) ? `<img src="${escH(st.logoUrl)}" alt="" style="height:32px">` : escH(st.logo || '🌊'))
+    .replace('{{LOGO}}', st.logoUrl && /^(https?:\/\/|\/)/.test(st.logoUrl) ? `<img src="${escH(st.logoUrl)}" alt="${escH(S('site.logoalt', 'ตราเมืองพัทยา'))}" class="seal">` : escH(st.logo || '🌊'))
+    .replace(/\{\{FAVICON\}\}/g, escH(st.logoUrl && /^\//.test(st.logoUrl) && st.logoUrl !== DEFAULT_SETTINGS.logoUrl ? st.logoUrl : '/icon-32.png'))
     .replace('{{HEADERCOLOR}}', color(st.header, '#0c4a6e'));
   res.set('content-type', 'text/html; charset=utf-8').set('cache-control', 'no-cache').set('vary', 'Cookie').send(out);
 }
@@ -565,6 +587,8 @@ app.put('/api/admin/antispam', admin, (req, res) => {
     if (Array.isArray(b.blocked)) A.blocked = [...new Set(b.blocked.map((x) => String(x).trim().slice(0, 64)).filter(Boolean))].slice(0, 2000); }
   audit(req, 'antispam', 'antispam', null, JSON.stringify(db.antispam).slice(0, 300)); save(); res.json({ ok: true, antispam: db.antispam });
 });
+app.post('/api/admin/logo', admin, wrap(async (req, res) => { const u = await savePhoto(req.body?.image); if (!u) return res.status(400).json({ error: 'เลือกรูปโลโก้' });
+  db.settings.logoUrl = u; audit(req, 'logo', 'settings', null, u); save(); broadcast('cms', { coll: 'settings' }); res.json({ ok: true, logoUrl: u }); }));
 app.get('/api/admin/settings', admin, (req, res) => res.json({ settings: db.settings, defaults: DEFAULT_SETTINGS }));
 app.put('/api/admin/settings', admin, (req, res) => {
   const b = req.body || {}, s = db.settings;

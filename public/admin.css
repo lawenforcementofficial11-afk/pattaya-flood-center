@@ -12,3 +12,6 @@
 .mq{display:flex;gap:10px;border:1px solid #e2e8f0;border-radius:10px;padding:8px;margin:8px 0;background:#fff}.mq.held{border-left:4px solid #b91c1c}.mq.pending{border-left:4px solid #d97706}
 .mqimg{width:96px;height:96px;object-fit:cover;border-radius:8px;flex:none}.mqimg.none{display:flex;align-items:center;justify-content:center;background:#f1f5f9;color:#94a3b8;font-size:12px}.mqbody{flex:1;min-width:0}.mqsel{flex:none}
 .pill.held{background:#fee2e2;color:#991b1b}.pill.pending{background:#fef3c7;color:#92400e}.btn.ok1{background:#16a34a}
+/* redesign: same Pattaya palette */
+body.adm{font-family:"Noto Sans Thai","Sarabun",system-ui,sans-serif;background:#f7f3ea;padding-bottom:0}.adm .top{background:linear-gradient(90deg,#0b3c5d,#0e7490)}.adm .seal{height:38px;width:38px}
+#nav a.on{background:#0e7490}.adm .btn{min-height:auto;padding:9px 14px}.adm .btn.sm{padding:5px 10px}
