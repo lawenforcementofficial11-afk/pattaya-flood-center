@@ -10,6 +10,7 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const CENTER = { lat: 12.9236, lng: 100.8825 };
 const store = require('./store')(DATA_DIR);
 const TEXTS = require('./texts').build();
+const PLACE = require('./geo/place'); // soi / road / landmark (offline OSM index + polite Nominatim fallback)
 const { AsyncLocalStorage } = require('async_hooks');
 const LANGS = ['th', 'en', 'zh'];
 const TR = { en: require('./i18n/en.json'), zh: require('./i18n/zh.json') };
@@ -67,6 +68,7 @@ async function init() {
   for (const k of ['health', 'emergency']) for (const x of db.contacts[k]) x.id ||= newId(k === 'health' ? 'H' : 'E');
   if (!db.users.length) { db.users.push({ id: newId('U'), username: ADMIN_USERNAME, name: 'ผู้ดูแลระบบ', role: 'superadmin', hash: bcrypt.hashSync(STAFF_PASSWORD, 10), active: true, pwv: 1, createdAt: new Date().toISOString() }); console.log(`bootstrapped superadmin "${ADMIN_USERNAME}" from STAFF_PASSWORD`); }
   if (db.audit.length > 5000) db.audit = db.audit.slice(-5000);
+  db.geocache ||= {}; backfillPlaces();
   save();
 }
 let saveT, saving = Promise.resolve();
@@ -149,8 +151,26 @@ function outsideErr(lat, lng) {
 }
 const area = (id) => db.contacts.areas.find((a) => a.id === id);
 const last4 = (p) => String(p || '').replace(/\D/g, '').slice(-4);
-const publicReport = (r) => ({ confirms: r.confirms || 1, mod: r.mod, cleared: !!r.cleared, yes: r.votes?.yes.length || 0, no: r.votes?.no.length || 0, id: r.id, areaId: r.areaId, areaName: r.areaName, level: r.level, levelText: LEVELS()[r.level], cm: LEVEL_CM[r.level], lat: r.lat, lng: r.lng, note: r.note, photo: r.photo, createdAt: r.createdAt, status: r.status });
-const publicRequest = (r) => ({ confirms: r.confirms || 1, id: r.id, kind: r.kind, areaName: r.areaName, lat: r.lat ? +r.lat.toFixed(3) : null, lng: r.lng ? +r.lng.toFixed(3) : null, needs: r.needs, status: r.status, statusText: r.statusText, createdAt: r.createdAt });
+// ---------- soi / road / landmark on every located record ----------
+const PLACE_KEYS = ['soi', 'soiEn', 'road', 'roadEn', 'landmark', 'landmarkEn', 'landmarkM', 'placeSrc', 'soiAuto'];
+// userSoi: the citizen's (possibly corrected) soi text from the form; kept verbatim, the detected value is preserved in soiAuto
+async function placeOf(lat, lng, userSoi) {
+  const p = await PLACE.lookup(db, lat, lng); const u = clean(userSoi, 100); p.soiAuto = '';
+  if (u && ![p.soi, p.road, p.soiEn, p.roadEn].filter(Boolean).includes(u)) { const k = PLACE.byName(u); p.soiAuto = p.soi || p.road || ''; Object.assign(p, { soi: k ? k.th : u, soiEn: k ? k.en : '', placeSrc: 'user' }); }
+  return p;
+}
+function roadPlace(points) { const m = points[Math.floor(points.length / 2)] || points[0]; const p = (m && PLACE.offline(m[0], m[1])) || { ...PLACE.EMPTY }; return { ...p, soiAuto: '', along: PLACE.along(points).join(' → ') }; }
+// backfill records created before soi lookup existed (offline index is instant; misses queue for Nominatim at 1 req/s)
+function backfillPlaces() {
+  let n = 0; const miss = [];
+  for (const k of ['reports', 'requests']) for (const r of db[k]) if (r.placeSrc === undefined) { const p = r.lat != null ? PLACE.offline(r.lat, r.lng) : null; Object.assign(r, p || { ...PLACE.EMPTY }, { soiAuto: '' }); n++; if (!p && r.lat != null) miss.push(r); }
+  for (const w of db.roads) if (w.placeSrc === undefined && w.points?.length) { Object.assign(w, roadPlace(w.points)); n++; }
+  if (n) { console.log(`place: backfilled soi/road/landmark on ${n} records (${miss.length} queued for Nominatim)`); save(); }
+  (async () => { for (const r of miss) { const p = await PLACE.nominatim(db, r.lat, r.lng); if (p) { Object.assign(r, p); save(); } } })();
+}
+const pubPlace = (r) => ({ soi: r.soi || '', soiEn: r.soiEn || '', road: r.road || '', roadEn: r.roadEn || '' });
+const publicReport = (r) => ({ ...pubPlace(r), landmark: r.landmark || '', landmarkEn: r.landmarkEn || '', confirms: r.confirms || 1, mod: r.mod, cleared: !!r.cleared, yes: r.votes?.yes.length || 0, no: r.votes?.no.length || 0, id: r.id, areaId: r.areaId, areaName: r.areaName, level: r.level, levelText: LEVELS()[r.level], cm: LEVEL_CM[r.level], lat: r.lat, lng: r.lng, note: r.note, photo: r.photo, createdAt: r.createdAt, status: r.status });
+const publicRequest = (r) => ({ ...pubPlace(r), confirms: r.confirms || 1, id: r.id, kind: r.kind, areaName: r.areaName, lat: r.lat ? +r.lat.toFixed(3) : null, lng: r.lng ? +r.lng.toFixed(3) : null, needs: r.needs, status: r.status, statusText: r.statusText, createdAt: r.createdAt });
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 // ---------- external data (cached) ----------
@@ -347,6 +367,12 @@ app.get('/api/events', (req, res) => {
   res.write('retry: 5000\n\n'); const c = { res, staff: !!readUser(req) }; clients.add(c); req.on('close', () => clients.delete(c));
 });
 
+// soi lookup for the forms (offline index only, plus already-cached Nominatim answers: never triggers new Nominatim calls)
+app.get('/api/geo/reverse', (req, res) => { const lat = num(req.query.lat), lng = num(req.query.lng); if (lat == null || lng == null) return res.status(400).json({ error: 'lat,lng' });
+  const p = PLACE.offline(lat, lng) || db.geocache?.[lat.toFixed(4) + ',' + lng.toFixed(4)] || { ...PLACE.EMPTY }; res.set('cache-control', 'public, max-age=86400').json({ ...p, inside: inPattaya(lat, lng) }); });
+app.get('/api/geo/sois', (req, res) => res.set('cache-control', 'public, max-age=3600').json(PLACE.sois(String(req.query.q || '').slice(0, 60), Math.min(50, num(req.query.n) || 30))));
+app.get('/api/geo/meta', (req, res) => res.json(PLACE.meta));
+
 // water reports (public)
 app.get('/api/reports', (req, res) => { const since = Date.now() - (num(req.query.hours) || 48) * 3600e3; res.json(db.reports.filter((r) => isPublic(r) && Date.parse(r.createdAt) > since).map(publicReport).reverse()); });
 app.post('/api/reports', guard('reports'), wrap(async (req, res) => {
@@ -356,7 +382,7 @@ app.post('/api/reports', guard('reports'), wrap(async (req, res) => {
   const dup = findDup('reports', (x) => isPublic(x) && x.level === b.level && dist(x.lat, x.lng, lat, lng) <= db.antispam.dedupeMeters);
   if (dup) { if (addVote(dup, req, 'yes')) asStats.merged++; save(); afterMod('reports', dup); return res.json({ ok: true, id: dup.id, merged: true, confirms: dup.confirms, mod: dup.mod }); }
   const a = area(b.areaId), note = clean(b.note, 300), areaName = a?.name || clean(b.areaName, 80);
-  const r = { id: newId('R'), areaId: a?.id || null, areaName, level: b.level, lat, lng, note, photo: await savePhoto(b.photo), status: 'new', ...initialMod(note + ' ' + areaName, req), src: { ip: req.ip || '', dev: devOf(req) }, votes: { yes: [], no: [] }, createdAt: new Date().toISOString() };
+  const r = { id: newId('R'), areaId: a?.id || null, areaName, level: b.level, lat, lng, note, photo: await savePhoto(b.photo), ...(await placeOf(lat, lng, b.soi)), status: 'new', ...initialMod(note + ' ' + areaName, req), src: { ip: req.ip || '', dev: devOf(req) }, votes: { yes: [], no: [] }, createdAt: new Date().toISOString() };
   db.reports.push(r); if (r.mod === 'held') sysAudit('mod-held', 'reports', r.id, (r.modReasons || []).join(', '));
   save(); broadcast('report', isPublic(r) ? publicReport(r) : { id: r.id, gone: true }); broadcast('staff:report', r, true); broadcast('staff:mod', modCounts(), true); res.json({ ok: true, id: r.id, mod: r.mod, public: isPublic(r) });
 }));
@@ -383,7 +409,7 @@ app.post('/api/requests', guard('requests'), wrap(async (req, res) => {
   if (dup) { confirmDup(dup); broadcast('staff:update', dup, true); return res.json({ ok: true, id: dup.id, merged: true, confirms: dup.confirms }); }
   const r = { id: newId('C'), kind: KINDS()[b.kind] ? b.kind : 'food', areaId: a.id, areaName: a.name, name, phone, people: num(b.people) || 1,
     needs: (Array.isArray(b.needs) ? b.needs : []).map((x) => clean(x, 40)).slice(0, 10), level: LEVEL_CM[b.level] ? b.level : null,
-    lat: num(b.lat), lng: num(b.lng), address: clean(b.address, 300), note: clean(b.note, 500), photo: await savePhoto(b.photo),
+    lat: num(b.lat), lng: num(b.lng), address: clean(b.address, 300), note: clean(b.note, 500), photo: await savePhoto(b.photo), ...(await placeOf(num(b.lat), num(b.lng), b.soi)),
     status: 'new', statusText: STATUS_TEXT().new, assignee: '', history: [{ at: new Date().toISOString(), s: 'new', by: S('st.bycitizen', 'ประชาชน') }], createdAt: new Date().toISOString() };
   db.requests.push(r); save(); broadcast('request', publicRequest(r)); broadcast('staff:request', r, true); res.json({ ok: true, id: r.id });
 }));
@@ -506,7 +532,7 @@ app.post('/api/admin/roads/:id/:act(approve|reject)', admin, (req, res) => {
 app.post('/api/staff/roads', staff, (req, res) => {
   const b = req.body || {}; const pts = (Array.isArray(b.points) ? b.points : []).map((p) => [num(p[0]), num(p[1])]).filter((p) => p[0] != null && p[1] != null && inPattaya(p[0], p[1]));
   if (pts.length < 2) return res.status(400).json({ error: S('err.road2', 'วาดอย่างน้อย 2 จุด') });
-  const r = { id: newId('W'), type: b.type === 'closed' ? 'closed' : 'detour', title: clean(b.title, 100) || (b.type === 'closed' ? S('map.closed', 'ถนนปิด') : S('map.detour', 'เส้นทางเลี่ยง')), note: clean(b.note, 300), points: pts.slice(0, 300), status: 'open', by: req.staff.n, byUser: req.user.username, createdAt: new Date().toISOString() };
+  const r = { id: newId('W'), type: b.type === 'closed' ? 'closed' : 'detour', title: clean(b.title, 100) || (b.type === 'closed' ? S('map.closed', 'ถนนปิด') : S('map.detour', 'เส้นทางเลี่ยง')), note: clean(b.note, 300), points: pts.slice(0, 300), ...roadPlace(pts.slice(0, 300)), status: 'open', by: req.staff.n, byUser: req.user.username, createdAt: new Date().toISOString() };
   const boss = RANK[req.user.role] >= RANK.admin; Object.assign(r, boss ? { approval: 'approved', approvedBy: req.staff.n, approvedAt: r.createdAt } : { approval: 'pending' });
   db.roads.push(r); audit(req, boss ? 'create' : 'road-submit', 'roads', r.id, r.title + (boss ? '' : ' (รออนุมัติ)')); save(); afterChange('roads', r); res.json({ ok: true, item: r, pending: !boss });
 });
@@ -514,11 +540,11 @@ app.post('/api/staff/roads', staff, (req, res) => {
 // ---------- back-office: generic collections ----------
 const F = (k, label, type = 's', extra = {}) => ({ k, label, type, ...extra });
 const COLLS = {
-  reports: { label: 'รายงานระดับน้ำ', arr: () => db.reports, triage: true, statuses: ['new', 'verified', 'hidden'], fields: [F('areaName', 'พื้นที่'), F('level', 'ระดับน้ำ', 'select', { options: Object.keys(LEVEL_CM) }), F('note', 'หมายเหตุ', 't'), F('lat', 'ละติจูด', 'n'), F('lng', 'ลองจิจูด', 'n')] },
-  requests: { label: 'คำขอช่วยเหลือ / อพยพ / ผู้ป่วย', arr: () => db.requests, triage: true, typeField: 'kind', statuses: ['new', 'triaged', 'assigned', 'enroute', 'resolved', 'closed'], fields: [F('kind', 'ประเภท', 'select', { options: ['food', 'evacuate', 'medical', 'other'] }), F('areaName', 'พื้นที่'), F('name', 'ชื่อ'), F('phone', 'เบอร์โทร'), F('people', 'จำนวนคน', 'n'), F('needs', 'สิ่งที่ต้องการ (คั่นด้วย ,)', 'list'), F('address', 'ที่อยู่', 't'), F('note', 'รายละเอียด', 't'), F('assignee', 'ทีมที่รับผิดชอบ'), F('priority', 'ความเร่งด่วน', 'select', { options: ['', 'low', 'normal', 'high', 'critical'] }), F('lat', 'ละติจูด', 'n'), F('lng', 'ลองจิจูด', 'n')] },
+  reports: { label: 'รายงานระดับน้ำ', arr: () => db.reports, triage: true, statuses: ['new', 'verified', 'hidden'], fields: [F('areaName', 'พื้นที่'), F('soi', 'ซอย'), F('level', 'ระดับน้ำ', 'select', { options: Object.keys(LEVEL_CM) }), F('road', 'ถนน'), F('landmark', 'จุดสังเกตใกล้เคียง'), F('note', 'หมายเหตุ', 't'), F('lat', 'ละติจูด', 'n'), F('lng', 'ลองจิจูด', 'n')] },
+  requests: { label: 'คำขอช่วยเหลือ / อพยพ / ผู้ป่วย', arr: () => db.requests, triage: true, typeField: 'kind', statuses: ['new', 'triaged', 'assigned', 'enroute', 'resolved', 'closed'], fields: [F('kind', 'ประเภท', 'select', { options: ['food', 'evacuate', 'medical', 'other'] }), F('areaName', 'พื้นที่'), F('soi', 'ซอย'), F('name', 'ชื่อ'), F('phone', 'เบอร์โทร'), F('road', 'ถนน'), F('landmark', 'จุดสังเกตใกล้เคียง'), F('people', 'จำนวนคน', 'n'), F('needs', 'สิ่งที่ต้องการ (คั่นด้วย ,)', 'list'), F('address', 'ที่อยู่', 't'), F('note', 'รายละเอียด', 't'), F('assignee', 'ทีมที่รับผิดชอบ'), F('priority', 'ความเร่งด่วน', 'select', { options: ['', 'low', 'normal', 'high', 'critical'] }), F('lat', 'ละติจูด', 'n'), F('lng', 'ลองจิจูด', 'n')] },
   missing: { label: 'ตามหาคน', arr: () => db.missing, triage: true, statuses: ['searching', 'found', 'closed'], fields: [F('personName', 'ชื่อผู้สูญหาย'), F('age', 'อายุ'), F('lastSeen', 'พบครั้งสุดท้าย', 't'), F('description', 'ลักษณะ', 't'), F('reporterName', 'ผู้แจ้ง'), F('reporterPhone', 'เบอร์ผู้แจ้ง')] },
   lostfound: { label: 'ของหาย–ได้คืน', arr: () => db.lostfound, triage: true, typeField: 'type', statuses: ['open', 'closed', 'hidden'], fields: [F('type', 'ประเภท', 'select', { options: ['lost', 'found'] }), F('category', 'หมวด'), F('title', 'หัวข้อ'), F('detail', 'รายละเอียด', 't'), F('place', 'สถานที่'), F('phone', 'เบอร์')] },
-  roads: { label: 'เส้นทางเลี่ยง / ถนนปิด', arr: () => db.roads, triage: true, typeField: 'type', statuses: ['open', 'hidden'], fields: [F('type', 'ประเภท', 'select', { options: ['detour', 'closed'] }), F('title', 'ชื่อ'), F('note', 'หมายเหตุ', 't')] },
+  roads: { label: 'เส้นทางเลี่ยง / ถนนปิด', arr: () => db.roads, triage: true, typeField: 'type', statuses: ['open', 'hidden'], fields: [F('type', 'ประเภท', 'select', { options: ['detour', 'closed'] }), F('title', 'ชื่อ'), F('soi', 'ซอย (จุดกึ่งกลาง)'), F('road', 'ถนน'), F('along', 'ถนน/ซอยที่ผ่าน'), F('landmark', 'จุดสังเกตใกล้เคียง'), F('note', 'หมายเหตุ', 't')] },
   areas: { label: 'พื้นที่ / ผู้ประสานงาน (พื้นที่ที่ให้บริการ)', arr: () => db.contacts.areas, create: true, fields: [F('id', 'รหัสพื้นที่ (a-z)'), F('name', 'ชื่อพื้นที่'), F('org', 'หน่วยงาน'), F('coordinator', 'ผู้ประสานงาน'), F('phone', 'เบอร์โทร'), F('lat', 'ละติจูด', 'n'), F('lng', 'ลองจิจูด', 'n'), F('served', 'เปิดรับคำขอทางเว็บ', 'b'), F('verified', 'ตรวจสอบเบอร์แล้ว', 'b'), F('source', 'แหล่งที่มา')] },
   health: { label: 'โรงพยาบาล / สาธารณสุข', arr: () => db.contacts.health, create: true, prefix: 'H', fields: [F('name', 'ชื่อ'), F('phone', 'เบอร์โทร'), F('note', 'หมายเหตุ'), F('verified', 'ตรวจสอบแล้ว', 'b'), F('source', 'แหล่งที่มา')] },
   emergency: { label: 'เบอร์ฉุกเฉิน', arr: () => db.contacts.emergency, create: true, prefix: 'E', fields: [F('name', 'ชื่อ'), F('phone', 'เบอร์โทร'), F('note', 'หมายเหตุ'), F('verified', 'ตรวจสอบแล้ว', 'b'), F('source', 'แหล่งที่มา')] },
@@ -553,8 +579,11 @@ app.put('/api/admin/c/:coll/:id', staff, (req, res) => {
     if (changed.length) return NOPE(res, 'แก้ได้เฉพาะสถานะ (ช่องอื่นแก้ได้เฉพาะผู้ดูแลสูงสุด): ' + changed.map((f) => f.label).join(', '));
     if (b.status && b.status !== r.status && !statusOk(req, b.status)) return NOPE(res, 'ซ่อนรายการได้เฉพาะผู้ดูแล');
   }
+  const ll0 = [r.lat, r.lng], soi0 = r.soi;
   for (const f of C.fields) if (f.k in b && !(c === 'areas' && f.k === 'id')) { const v = coerce(f, b[f.k]); if (JSON.stringify(v) !== JSON.stringify(r[f.k])) { r[f.k] = v; ch.push(f.label); } }
   if (b.status && b.status !== r.status && setStatus(req, c, r, b.status, b.stnote ?? (C.fields.some((f) => f.k === 'note') ? '' : b.note))) ch.push('สถานะ=' + b.status);
+  if (['reports', 'requests'].includes(c) && (r.lat !== ll0[0] || r.lng !== ll0[1]) && r.soi === soi0) Object.assign(r, PLACE.offline(r.lat, r.lng) || { ...PLACE.EMPTY }, { soiAuto: '' });
+  else if (['reports', 'requests', 'roads'].includes(c) && r.soi !== soi0) r.placeSrc = 'staff';
   if (c === 'requests' && 'areaName' in b) { const a = db.contacts.areas.find((x) => x.name === r.areaName); if (a) r.areaId = a.id; }
   audit(req, 'update', c, r.id, ch.join(', ')); save(); afterChange(c, r); res.json({ ok: true, item: r });
 });
@@ -568,7 +597,7 @@ app.post('/api/admin/c/:coll/bulk', staff, wrap(async (req, res) => {
 }));
 app.get('/api/admin/c/:coll/export.csv', staff, (req, res) => {
   const C = COLLS[req.params.coll]; if (!C) return res.status(404).end(); if (!C.triage && RANK[req.user.role] < 2) return res.status(403).end();
-  const cols = ['id', ...C.fields.map((f) => f.k).filter((k) => k !== 'id'), ...(C.statuses ? ['status'] : []), 'photo', 'createdAt'];
+  const cols = ['id', ...C.fields.map((f) => f.k).filter((k) => k !== 'id'), ...(C.statuses ? ['status'] : []), ...(['reports', 'requests', 'roads'].includes(req.params.coll) ? ['soiEn', 'roadEn', 'landmarkEn', 'landmarkM', 'placeSrc', 'soiAuto'] : []), 'photo', 'createdAt'];
   const q = (v) => { const s = Array.isArray(v) ? v.join('; ') : v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
   const rows = C.arr().map((r) => cols.map((k) => q(r[k])).join(','));
   req.user && audit(req, 'export', req.params.coll, null, rows.length + ' แถว'); save();
@@ -590,9 +619,10 @@ const exportOk = (req) => { const want = process.env.EXPORT_TOKEN || ''; const g
 const maskPhone = (p) => (p ? 'xxx-xxx-' + last4(p) : '');
 function exportAll() {
   const pick = (r, keys) => Object.fromEntries(keys.map((k) => [k, Array.isArray(r[k]) ? r[k].join(', ') : r[k] ?? '']));
-  const reports = db.reports.map((r) => ({ ...pick(r, ['id', 'createdAt', 'areaName', 'level', 'note', 'lat', 'lng', 'status', 'mod', 'modBy', 'modAt', 'cleared']), levelText: LEVELS()[r.level] || '', confirms: r.confirms || 1, votesYes: r.votes?.yes?.length || 0, votesNo: r.votes?.no?.length || 0, cm: LEVEL_CM[r.level] ?? '', photo: r.photo ? 1 : 0 }));
-  const requests = db.requests.map((r) => ({ ...pick(r, ['id', 'createdAt', 'kind', 'areaName', 'name', 'people', 'needs', 'address', 'note', 'assignee', 'priority', 'status', 'lat', 'lng', 'updatedAt']), phone: maskPhone(r.phone) }));
-  const roads = db.roads.map((r) => ({ ...pick(r, ['id', 'createdAt', 'type', 'title', 'note', 'status', 'approval', 'reason', 'by', 'approvedBy', 'approvedAt']), lat: r.points?.[0]?.[0] ?? '', lng: r.points?.[0]?.[1] ?? '', points: (r.points || []).length }));
+  const PL = ['soi', 'road', 'landmark', 'landmarkM', 'soiEn', 'roadEn', 'landmarkEn', 'placeSrc', 'soiAuto'];
+  const reports = db.reports.map((r) => ({ ...pick(r, ['id', 'createdAt', 'areaName', ...PL, 'level', 'note', 'lat', 'lng', 'status', 'mod', 'modBy', 'modAt', 'cleared']), levelText: LEVELS()[r.level] || '', confirms: r.confirms || 1, votesYes: r.votes?.yes?.length || 0, votesNo: r.votes?.no?.length || 0, cm: LEVEL_CM[r.level] ?? '', photo: r.photo ? 1 : 0 }));
+  const requests = db.requests.map((r) => ({ ...pick(r, ['id', 'createdAt', 'kind', 'areaName', ...PL, 'name', 'people', 'needs', 'address', 'note', 'assignee', 'priority', 'status', 'lat', 'lng', 'updatedAt']), phone: maskPhone(r.phone) }));
+  const roads = db.roads.map((r) => ({ ...pick(r, ['id', 'createdAt', 'type', 'title', ...PL, 'along', 'note', 'status', 'approval', 'reason', 'by', 'approvedBy', 'approvedAt']), lat: r.points?.[0]?.[0] ?? '', lng: r.points?.[0]?.[1] ?? '', points: (r.points || []).length }));
   const lostfound = db.lostfound.map((r) => ({ ...pick(r, ['id', 'createdAt', 'type', 'category', 'title', 'detail', 'place', 'status', 'mod']), phone: maskPhone(r.phone) }));
   const missing = db.missing.map((r) => ({ ...pick(r, ['id', 'createdAt', 'personName', 'age', 'lastSeen', 'description', 'reporterName', 'status', 'mod']), reporterPhone: maskPhone(r.reporterPhone) }));
   const c = db.contacts || {}, con = (t) => (x) => ({ group: t, ...pick(x, ['id', 'name', 'phone', 'note', 'verified', 'source']) });

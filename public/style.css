@@ -355,3 +355,25 @@ main textarea{min-height:90px}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
 @media print{.hd-tools,.menu,#alertbar .ab-scale,.ft .ftlinks,.btn{display:none!important}}
 main:focus,[tabindex="-1"]:focus{outline:none}
+/* ---- soi / road / landmark (map precision) ---- */
+.plc{display:flex;gap:5px;align-items:flex-start;font-size:.92em;color:var(--ink);margin:2px 0 4px;line-height:1.35}
+.plc .ic{width:15px;height:15px;flex:none;margin-top:2px;color:var(--link)}
+.leaflet-popup-content .plc{margin:4px 0}
+.tt-soi{background:#fff;border:1.5px solid #111a24;color:#111a24;font-size:12px;font-weight:700;padding:1px 6px;border-radius:3px;box-shadow:0 1px 2px rgba(0,0,0,.25);white-space:nowrap}
+.tt-soi.tt-pending{border-style:dashed;font-weight:600}
+.tt-soi .ttw{font-weight:400}
+.tt-soi .tts+.ttw::before{content:" · "}
+.leaflet-container:not(.zhi) .tt-soi:not(.tt-pending){display:none}
+.leaflet-container:not(.zhi) .tt-soi .tts{display:none}
+.leaflet-container:not(.zhi) .tt-soi .tts+.ttw::before{content:none}
+.soibox{margin-top:14px}
+.combo{position:relative;max-width:34em}
+.soil{position:absolute;z-index:1001;left:0;right:0;top:100%;margin:2px 0 0;padding:0;list-style:none;background:#fff;border:2px solid #111a24;max-height:280px;overflow:auto;box-shadow:0 4px 14px rgba(0,0,0,.18)}
+.soil li{padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--rule)}
+.soil li small{display:block;color:var(--ink2);font-size:.85em}
+.soil li[aria-selected=true],.soil li:hover{background:#1a56b8;color:#fff}
+.soil li[aria-selected=true] small,.soil li:hover small{color:#e8eefc}
+.soil li.none{cursor:default;color:var(--ink2)}
+.soil li.none:hover{background:#fff;color:var(--ink2)}
+.plx{margin-top:4px}
+.pli small+small{margin-top:1px}
