@@ -7,7 +7,7 @@ const B = process.env.BASE || 'http://localhost:3600', out = require('path').joi
   await d.goto(B + '/admin'); await d.fill('#un', 'admin'); await d.fill('#pw', process.env.STAFF_PASSWORD || 'pattaya1337'); await d.click('#go');
   await d.waitForSelector('.stats'); await d.waitForTimeout(800); await d.screenshot({ path: out + '/admin-dashboard.png', fullPage: true });
   await d.goto(B + '/admin#c/requests'); await d.waitForSelector('#tb tr'); await d.click('.ed'); await d.waitForSelector('.modal'); await d.waitForTimeout(400); await d.screenshot({ path: out + '/admin-requests.png' });
-  await d.goto(B + '/admin#texts'); await d.waitForSelector('.kv'); await d.fill('#q', 'home.food'); await d.waitForTimeout(400); await d.screenshot({ path: out + '/admin-texts.png', fullPage: true });
+  await d.goto(B + '/admin#texts'); await d.waitForSelector('.kv'); await d.fill('#q', 'dash.q.food'); await d.waitForTimeout(400); await d.screenshot({ path: out + '/admin-texts.png', fullPage: true });
   await d.goto(B + '/admin#users'); await d.waitForSelector('tbody tr'); await d.waitForTimeout(400); await d.screenshot({ path: out + '/admin-users.png', fullPage: true });
   await d.goto(B + '/admin#settings'); await d.waitForSelector('#secs li'); await d.waitForTimeout(2500); await d.screenshot({ path: out + '/admin-settings.png' });
   await d.goto(B + '/admin#ptycctv'); await d.waitForSelector('#tb tr', { timeout: 30000 }); await d.waitForTimeout(2000); await d.screenshot({ path: out + '/admin-cctv-manage.png' });

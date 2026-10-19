@@ -1,12 +1,22 @@
-<!doctype html><html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{T:site.title|ศูนย์ช่วยเหลือน้ำท่วมเมืองพัทยา | ระดับน้ำ ขอความช่วยเหลือ}}</title>
-<meta name="description" content="{{T:site.description|ศูนย์ช่วยเหลือน้ำท่วมเมืองพัทยา จ.ชลบุรี ระดับน้ำ พยากรณ์ฝน แผนที่น้ำท่วม เส้นทางเลี่ยง และเบอร์ฉุกเฉิน}}">
-<meta property="og:title" content="{{T:site.title|ศูนย์ช่วยเหลือน้ำท่วมเมืองพัทยา | ระดับน้ำ ขอความช่วยเหลือ}}"><meta property="og:description" content="{{T:site.description|ศูนย์ช่วยเหลือน้ำท่วมเมืองพัทยา จ.ชลบุรี ระดับน้ำ พยากรณ์ฝน แผนที่น้ำท่วม เส้นทางเลี่ยง และเบอร์ฉุกเฉิน}}">
+<!doctype html><html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>{{T:site.title2|พัทยาเฝ้าระวังน้ำ — สถานะน้ำ แผนที่ และการช่วยเหลือในเขตเมืองพัทยา}}</title>
+<meta name="description" content="{{T:site.desc2|ภาพรวมสถานการณ์น้ำในเมืองพัทยาแบบสด แผนที่จุดน้ำขัง ถนนปิด เส้นทางเลี่ยง ช่องทางแจ้งเหตุและขอรับความช่วยเหลือ พร้อมสายด่วนที่ใช้ได้ทันที}}">
+<meta property="og:title" content="{{T:site.title2|พัทยาเฝ้าระวังน้ำ — สถานะน้ำ แผนที่ และการช่วยเหลือในเขตเมืองพัทยา}}"><meta property="og:description" content="{{T:site.desc2|ภาพรวมสถานการณ์น้ำในเมืองพัทยาแบบสด แผนที่จุดน้ำขัง ถนนปิด เส้นทางเลี่ยง ช่องทางแจ้งเหตุและขอรับความช่วยเหลือ พร้อมสายด่วนที่ใช้ได้ทันที}}">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700;800&display=swap"><link rel="icon" href="{{FAVICON}}"><link rel="apple-touch-icon" href="/icon-180.png"><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"><link rel="stylesheet" href="/style.css"><style>{{THEME}}</style>
 <link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="{{HEADERCOLOR}}"></head>
-<body><header class="top"><a href="#/" class="brand"><span class="logo">{{LOGO}}</span><span><b>{{T:site.name|ศูนย์ช่วยเหลือน้ำท่วม}}</b><small>{{T:site.subtitle|เมืองพัทยา · จ.ชลบุรี}}</small></span></a>
-<span id="live" class="live" title="{{T:site.livetitle|อัปเดตเรียลไทม์}}">{{T:site.live|● สด}}</span></header>
-<div id="banner"></div><div id="ebar"></div>
-<main id="app"></main><nav id="bnav" class="bnav" aria-label="main"></nav>
-<footer class="foot">{{T:site.footer1|ข้อมูลระดับน้ำ: คลังข้อมูลน้ำแห่งชาติ (สสน.) · พยากรณ์: Open-Meteo · แผนที่ © OpenStreetMap}}<br>{{T:site.footer2|ต้นแบบระบบ — ไม่ใช่เว็บไซต์ทางการของเมืองพัทยา}}<br><span class="credit">{{T:site.credit|พัฒนาโดย จ.อ. ธงชัย ชัยสีทอง เจ้าพนักงานเทศกิจชำนาญงาน}}</span></footer>
+<body><a class="skip" href="#app">{{T:site.skip|ข้ามไปยังเนื้อหา}}</a>
+<div class="shell">
+<aside class="rail" id="rail" aria-label="{{T:site.railaria|เมนูหลัก}}">
+ <div class="rail-top"><a href="#/" class="brand"><span class="logo">{{LOGO}}</span><span class="bt"><b>{{T:site.brand|พัทยาเฝ้าระวังน้ำ}}</b><small>{{T:site.tagline|เมืองพัทยา จังหวัดชลบุรี}}</small></span></a>
+  <span id="live" class="live" role="status" title="{{T:site.live2title|เชื่อมต่อข้อมูลสดอยู่}}"><i></i>{{T:site.live2|ข้อมูลสด}}</span></div>
+ <nav id="rnav" class="rnav" aria-label="{{T:site.railaria|เมนูหลัก}}"></nav>
+ <div id="rcall" class="rcall"></div>
+</aside>
+<div class="stage">
+ <div id="banner"></div>
+ <main id="app" tabindex="-1"></main>
+ <footer class="foot"><p>{{T:site.src|แหล่งข้อมูล — ระดับน้ำและฝน: สสน. (ThaiWater) · พยากรณ์อากาศ: Open-Meteo · แผนที่ฐาน: OpenStreetMap}}</p><p>{{T:site.disclaim|ระบบต้นแบบเพื่อการทดลองใช้งาน ไม่ใช่ช่องทางทางการของเมืองพัทยา}}</p><p class="credit">{{T:site.credit|พัฒนาโดย จ.อ. ธงชัย ชัยสีทอง เจ้าพนักงานเทศกิจชำนาญงาน}}</p></footer>
+</div>
+</div>
+<nav id="tabbar" class="tabbar" aria-label="{{T:site.tabaria|แถบเมนูด้านล่าง}}"></nav>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script src="/app.js"></script></body></html>

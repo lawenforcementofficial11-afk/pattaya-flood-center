@@ -35,7 +35,7 @@ const MOD_COLLS = ['reports', 'lostfound'];
 let db;
 const DEFAULT_SETTINGS = { logo: '🌊', logoUrl: '/pattaya-seal.png', primary: '#0e7490', header: '#0b3c5d', bg: '#f7f3ea',
   banner: { on: false, text: '', level: 'warn' },
-  sections: ['actions', 'food', 'contact', 'sos', 'report', 'near', 'services', 'situation', 'moreinfo', 'emergency', 'stafflink'].map((id) => ({ id, on: true })) };
+  sections: ['status', 'livemap', 'metrics', 'quick', 'rainwater', 'near', 'hotlines', 'sources', 'staffentry'].map((id) => ({ id, on: true })) };
 const SEED_CCTV = [{ title: 'กล้อง CCTV ทั่วไทย', url: 'https://cctv.maholan.net/', note: 'รวมกล้องสาธารณะทั่วประเทศ ค้นหา "พัทยา" / "ชลบุรี"' }, { title: 'ThaiWater', url: 'https://www.thaiwater.net/', note: 'ภาพสถานีโทรมาตร' }];
 const SEED_LINKS = [{ title: 'คลังข้อมูลน้ำแห่งชาติ (ThaiWater)', url: 'https://www.thaiwater.net/', note: 'สถานีวัดน้ำและฝนทั่วประเทศ' }, { title: 'กรมชลประทาน', url: 'https://bigdata-swoc.rid.go.th/pier/all', note: 'ระดับน้ำทั้งประเทศ' }, { title: 'กรมทรัพยากรน้ำ', url: 'https://telemetry.dwr.go.th/home?layerMapType=BASIN', note: 'สถานีโทรมาตรรายลุ่มน้ำ' }, { title: 'กรมอุตุนิยมวิทยา', url: 'https://weather.tmd.go.th/', note: 'เรดาร์ฝนและพยากรณ์' }];
 async function init() {
@@ -58,7 +58,8 @@ async function init() {
     db.reports.push({ id: newId('R'), areaId: 'central', areaName: 'พัทยากลาง', level: 'knee', lat: 12.9355, lng: 100.889, note: 'ข้อมูลตัวอย่าง', photo: null, status: 'new', confirms: 1, createdAt: now });
     db.roads.push({ id: newId('W'), type: 'closed', title: 'ข้อมูลตัวอย่าง: ถนนปิด', note: '', points: [[12.94, 100.887], [12.93, 100.886]], status: 'open', by: 'demo', createdAt: now }); console.log('DEMO_SEED=1: seeded demo data'); }
   db.settings = { ...JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), ...(db.settings || {}) };
-  const ids = db.settings.sections.map((s) => s.id); for (const s of DEFAULT_SETTINGS.sections) if (!ids.includes(s.id)) s.id === 'actions' ? db.settings.sections.unshift({ ...s }) : db.settings.sections.push({ ...s });
+  { const ok = DEFAULT_SETTINGS.sections.map((s) => s.id); db.settings.sections = (db.settings.sections || []).filter((s) => ok.includes(s.id)); if (!db.settings.sections.length) db.settings.sections = JSON.parse(JSON.stringify(DEFAULT_SETTINGS.sections)); } // v3 dashboard layout: drop section ids of the old home page
+  const ids = db.settings.sections.map((s) => s.id); for (const s of DEFAULT_SETTINGS.sections) if (!ids.includes(s.id)) db.settings.sections.push({ ...s });
   { const st = db.settings; if (st.primary === '#0369a1' && st.header === '#0c4a6e' && st.bg === '#f0f9ff') Object.assign(st, { primary: DEFAULT_SETTINGS.primary, header: DEFAULT_SETTINGS.header, bg: DEFAULT_SETTINGS.bg }); if (!st.logoUrl && st.logo === '🌊') st.logoUrl = DEFAULT_SETTINGS.logoUrl; }
   db.cctvOverrides ||= {};
   db.cctv ||= SEED_CCTV.map((x) => ({ id: newId('V'), kind: 'link', ...x, status: 'open', createdAt: new Date().toISOString() }));
@@ -78,8 +79,8 @@ for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, async () => { await flu
 const S = (k, d) => { const th = db.texts[k] != null && db.texts[k] !== '' ? db.texts[k] : d; const l = L(); if (l === 'th') return th; return db.i18n[l]?.[k] ?? TR[l][k] ?? th; };
 // effective text map for a language (sent to the public client)
 const textsFor = (l) => (l === 'th' ? db.texts : { ...TR[l], ...db.i18n[l] });
-const LEVELS = () => ({ dry: S('level.dry', 'แห้ง / ต่ำกว่าข้อเท้า <10 ซม.'), ankle: S('level.ankle', 'ข้อเท้า–เข่า 10–50 ซม.'), knee: S('level.knee', 'เข่า–เอว 50–100 ซม.'), waist: S('level.waist', 'เอว–อก 100–130 ซม.'), chest: S('level.chest', 'อกขึ้นไป 130–180 ซม.'), roof: S('level.roof', 'มิดหัว / ท่วมหลังคา >180 ซม.') });
-const KINDS = () => ({ food: S('kind.food', 'ขออาหาร / ถุงยังชีพ'), evacuate: S('kind.evacuate', 'ติดอยู่ ต้องการอพยพ'), medical: S('kind.medical', 'ผู้ป่วย / ต้องการยา'), other: S('kind.other', 'อื่น ๆ') });
+const LEVELS = () => ({ dry: S('level.dry', 'ผิวถนนเปียก · ไม่ถึง 10 ซม.'), ankle: S('level.ankle', 'ท่วมข้อเท้า–ใต้เข่า · 10–50 ซม.'), knee: S('level.knee', 'ระดับเข่า–สะโพก · 50–100 ซม.'), waist: S('level.waist', 'ระดับเอว–ใต้อก · 100–130 ซม.'), chest: S('level.chest', 'ระดับอก–คอ · 130–180 ซม.'), roof: S('level.roof', 'สูงกว่าศีรษะ · เกิน 180 ซม.') });
+const KINDS = () => ({ food: S('kind.food', 'ขอสิ่งของจำเป็น (อาหาร/น้ำ)'), evacuate: S('kind.evacuate', 'ต้องการออกจากพื้นที่'), medical: S('kind.medical', 'ผู้ป่วย / ขอยา'), other: S('kind.other', 'อื่น ๆ') });
 const STATUS_TEXT = () => ({ new: S('st.new', 'รับเรื่องแล้ว รอเจ้าหน้าที่'), triaged: S('st.triaged', 'คัดกรองแล้ว จัดลำดับความเร่งด่วน'), assigned: S('st.assigned', 'ส่งต่อทีมในพื้นที่แล้ว'), enroute: S('st.enroute', 'ทีมกำลังเดินทาง'), resolved: S('st.resolved', 'ช่วยเหลือเรียบร้อย'), closed: S('st.closed', 'ปิดเคส'), verified: S('st.verified', 'ยืนยันแล้ว'), hidden: S('st.hidden', 'ซ่อน'), searching: S('st.searching', 'กำลังตามหา'), found: S('st.found', 'พบตัวแล้ว'), open: S('st.open', 'ประกาศอยู่ / เปิด') });
 const LEVEL_CM = { dry: 5, ankle: 30, knee: 75, waist: 115, chest: 155, roof: 200 };
 
@@ -212,7 +213,7 @@ function waterLevels() {
       const wl = +s.waterlevel_msl, prev = s.waterlevel_msl_previous != null ? +s.waterlevel_msl_previous : null, bank = s.station.min_bank;
       const diff = bank != null ? +(wl - bank).toFixed(2) : null;
       let status = S('rain.st0', 'ปกติ'), sev = 0;
-      if (diff != null) { if (diff > 0) { status = S('rain.st3', 'ล้นตลิ่ง'); sev = 3; } else if (diff > -0.5) { status = S('rain.st2', 'ใกล้ล้นตลิ่ง'); sev = 2; } else if (s.situation_level >= 4 || diff > -1.2) { status = S('rain.st1', 'น้ำมาก'); sev = 1; } }
+      if (diff != null) { if (diff > 0) { status = S('rain.st3', 'เกินขอบตลิ่ง'); sev = 3; } else if (diff > -0.5) { status = S('rain.st2', 'ใกล้ขอบตลิ่ง'); sev = 2; } else if (s.situation_level >= 4 || diff > -1.2) { status = S('rain.st1', 'น้ำค่อนข้างสูง'); sev = 1; } }
       const trend = prev == null ? S('rain.tr_unknown', 'ไม่ทราบ') : wl - prev > 0.02 ? S('rain.tr_up', 'กำลังขึ้น') : wl - prev < -0.02 ? S('rain.tr_down', 'กำลังลง') : S('rain.tr_flat', 'ทรงตัว');
       return { id: s.station.id, name: s.station.tele_station_name.th, code: s.station.tele_station_oldcode, province: s.geocode.province_name.th, amphoe: s.geocode.amphoe_name.th, tambon: s.geocode.tumbon_name.th,
         lat: s.station.tele_station_lat, lng: s.station.tele_station_long, distanceKm: Math.round(d), level: wl, bank, diff, status, sev, trend, measuredAt: s.waterlevel_datetime, agency: s.agency?.agency_shortname?.th?.trim() };

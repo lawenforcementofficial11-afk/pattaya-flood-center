@@ -1,6 +1,6 @@
-# ศูนย์ช่วยเหลือน้ำท่วม เมืองพัทยา (ต้นแบบ)
+# พัทยาเฝ้าระวังน้ำ (Pattaya FloodWatch) — ต้นแบบ
 
-เว็บศูนย์ช่วยเหลือน้ำท่วมสำหรับเมืองพัทยา/อ.บางละมุง จ.ชลบุรี — จำลองระบบทั้งหมดของ chachoengsao-flood.vercel.app
+เว็บข้อมูลและรับแจ้งน้ำท่วมสำหรับเมืองพัทยา จ.ชลบุรี ออกแบบใหม่ทั้งหมดในอัตลักษณ์ของเมืองพัทยา (แดชบอร์ดสถานะเมือง · แผนที่เป็นหลัก · เมนูข้างบนเดสก์ท็อป / แถบล่างบนมือถือ · ไอคอน SVG ชุดของเว็บเอง) — ดู `DESIGN-NOTES.md`
 พร้อมระบบ **เส้นทางเลี่ยงน้ำท่วม** (Node.js + Express, เก็บข้อมูลเป็นไฟล์ JSON, ไม่มี build step)
 
 ## วิธีรัน
@@ -44,7 +44,7 @@ STAFF_PASSWORD=รหัสของคุณ npm start      # http://localhost:
 - **Vercel**: ไม่เหมาะกับโค้ดนี้ตรง ๆ (serverless ไม่มีไฟล์ถาวร และ SSE จำกัดเวลา) ต้องย้ายที่เก็บไป DB เช่น Supabase/Postgres
 
 ## ข้อจำกัด
-- ไม่มีสถานีวัดระดับน้ำ (โทรมาตร) ในเขตพัทยา/บางละมุง ระบบจึงแสดงสถานีที่ใกล้ที่สุดใน ชลบุรี/ระยอง/ฉะเชิงเทรา (43–86 กม.) ถ้า API ล่มจะแสดงข้อผิดพลาด ไม่สร้างค่าขึ้นเอง
+- ไม่มีสถานีวัดระดับน้ำ (โทรมาตร) ในเขตพัทยา/บางละมุง ระบบจึงใช้รายงานจากประชาชนเป็นหลัก และบอกชื่อสถานีที่ใกล้ที่สุด (43–86 กม.) เพื่ออ้างอิงเท่านั้น ถ้า API ล่มจะแสดงข้อผิดพลาด ไม่สร้างค่าขึ้นเอง
 - OSRM demo / Nominatim เป็นบริการสาธารณะ มีข้อจำกัดการใช้งาน ควรใช้ ORS key หรือโฮสต์เองเมื่อใช้งานจริง
 - รหัสผ่านเจ้าหน้าที่ใช้ร่วมกัน 1 รหัส (ระบุชื่อทีมตอนเข้าสู่ระบบเพื่อบันทึก audit) · ยังไม่มีหลายภาษา · ไม่ได้ฝังภาพสด CCTV
 - พื้นที่/พิกัดศูนย์กลางของแต่ละพื้นที่เป็นค่าประมาณ แก้ได้ในหน้าแอดมิน
@@ -107,7 +107,9 @@ Off by default; records marked ทดสอบ / ข้อมูลตัวอ�
 
 ## Look
 - Pattaya City seal (Wikimedia Commons "File:Pattaya seal.png", originally from pattaya.go.th) is stored at `public/pattaya-seal.png`, with icons generated at 32/180/192/512. Admins can replace it with the logo URL setting or POST /api/admin/logo.
-- Noto Sans Thai font. Sea/turquoise, sunset orange and sand palette, with red reserved for emergencies. Big emergency call bar, an icon action grid as the `actions` home section (reorderable), inline SVG icons, and a bottom nav on mobile.
+- Noto Sans Thai font. Sea/turquoise, sunset orange and sand palette (unchanged), with red reserved for emergencies.
+- Layout v3 (see `DESIGN-NOTES.md`): side rail navigation on desktop (≥960 px) with hotline buttons; compact top bar + bottom tab bar with a centre quick-action sheet on mobile. Home is a dashboard whose sections are reorderable in /admin → settings: `status` (city flood status hero computed from the last 24 h of reports + rain forecast), `livemap`, `metrics`, `quick`, `rainwater`, `near`, `hotlines`, `sources`, `staffentry`. Map page is map-first (full-height map, floating legend/detour panel). New pages `#/call` (phone book) and `#/more` (full menu). Own inline SVG icon set (`IC` in public/app.js). All public copy uses CMS keys (`site.*`, `nav.*`, `tab.*`, `sheet.*`, `dash.*`, `rep.*`, `aid.*`, `track.*`, `zone.*`, `feed.*`, `find.*`, `lost.*`, `cam.*`, `wx.*`, `gmap.*`, `call.*`, `menu.*`) with TH defaults and EN/中文 in i18n/.
+- Screenshots: `BASE=http://localhost:3600 node scripts/screenshot.js` → new-home-mobile.png, new-home-desktop.png, new-map.png, new-report-form.png, new-help.png.
 
 ## Water levels: Pattaya City only
 - ThaiWater api-v3 (`waterlevel_load`) has no telemetered water-level station inside Pattaya City. The nearest is บ้านเขาโบสถ์, Rayong (RID), about 43 km away.
