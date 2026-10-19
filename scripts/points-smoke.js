@@ -41,7 +41,7 @@ const call = async (u, o = {}, tok) => { const r = await fetch(B + u, { method: 
   await T('UI: /#/points mobile — map markers, cards, needs, tel, Google Maps, money note, filter chip', async () => {
     await m.goto(B + '/#/points'); await m.waitForSelector('#ptl .ptc'); await m.waitForTimeout(2500);
     ok(await m.locator('.leaflet-marker-icon .ptmk').count() >= 2, 'markers'); ok(/ไม่รับเงิน/.test(await m.locator('.pts-money').innerText()), 'money note');
-    const c = m.locator('#ptl .ptc.open').first(); ok(/น้ำดื่ม 2 แพ็ก/.test(await c.innerText()), 'needs'); ok(/^tel:\d+/.test(await c.locator('a[href^="tel:"]').getAttribute('href')), 'tel');
+    const c = m.locator('#ptl .ptc.open', { hasText: 'SMOKE จุดเจ้าหน้าที่ แยกพัทยากลาง' }); ok(/น้ำดื่ม 2 แพ็ก/.test(await c.innerText()), 'needs'); ok(/^tel:\d+/.test(await c.locator('a[href^="tel:"]').getAttribute('href')), 'tel');
     ok(/google\.com\/maps\/dir/.test(await c.locator('a[href*="google.com/maps"]').getAttribute('href')), 'gmaps'); ok(/8/.test(await c.locator('.shav').innerText()), 'staff count');
     ok(!/news|ข่าว/i.test(await m.locator('#app').innerHTML()), 'news link'); ok(await m.locator('.foot .credit').count(), 'footer credit');
     await m.screenshot({ path: OUT + '/donate-page-mobile.png', fullPage: true });
