@@ -389,7 +389,7 @@ app.post('/api/reports', guard('reports'), wrap(async (req, res) => {
   if (!LEVEL_CM[b.level]) return res.status(400).json({ error: S('err.level', 'เลือกระดับน้ำ') });
   if (lat == null || !inPattaya(lat, lng)) { const e = outsideErr(lat, lng); return res.status(400).json({ error: e.message, outside: true, nearby: e.nearby }); }
   const dup = findDup('reports', (x) => isPublic(x) && x.level === b.level && dist(x.lat, x.lng, lat, lng) <= db.antispam.dedupeMeters);
-  if (dup) { if (addVote(dup, req, 'yes')) asStats.merged++; save(); afterMod('reports', dup); return res.json({ ok: true, id: dup.id, merged: true, confirms: dup.confirms, mod: dup.mod }); }
+  if (dup) { if (addVote(dup, req, 'yes')) asStats.merged++; save(); afterMod('reports', dup); return res.json({ ok: true, id: dup.id, merged: true, confirms: dup.confirms || 1, mod: dup.mod }); }
   const a = area(b.areaId), note = clean(b.note, 300), areaName = a?.name || clean(b.areaName, 80);
   const r = { id: newId('R'), areaId: a?.id || null, areaName, level: b.level, lat, lng, note, photo: await savePhoto(b.photo), ...(await placeOf(lat, lng, b.soi)), status: 'new', ...initialMod(note + ' ' + areaName, req), src: { ip: req.ip || '', dev: devOf(req) }, votes: { yes: [], no: [] }, createdAt: new Date().toISOString() };
   db.reports.push(r); if (r.mod === 'held') sysAudit('mod-held', 'reports', r.id, (r.modReasons || []).join(', '));
@@ -415,7 +415,7 @@ app.post('/api/requests', guard('requests'), wrap(async (req, res) => {
   const name = clean(b.name, 80); if (!name) return res.status(400).json({ error: S('err.name', 'กรอกชื่อ') });
   const kd = KINDS()[b.kind] ? b.kind : 'food', la = num(b.lat), ln = num(b.lng);
   const dup = findDup('requests', (x) => x.status !== 'deleted' && x.kind === kd && x.areaId === a.id && (last4(x.phone) === last4(phone) || (la != null && x.lat != null && dist(x.lat, x.lng, la, ln) <= db.antispam.dedupeMeters)));
-  if (dup) { confirmDup(dup); broadcast('staff:update', dup, true); return res.json({ ok: true, id: dup.id, merged: true, confirms: dup.confirms }); }
+  if (dup) { confirmDup(dup); broadcast('staff:update', dup, true); return res.json({ ok: true, id: dup.id, merged: true, confirms: dup.confirms || 1 }); }
   const r = { id: newId('C'), kind: KINDS()[b.kind] ? b.kind : 'food', areaId: a.id, areaName: a.name, name, phone, people: num(b.people) || 1,
     needs: (Array.isArray(b.needs) ? b.needs : []).map((x) => clean(x, 40)).slice(0, 10), level: LEVEL_CM[b.level] ? b.level : null,
     lat: num(b.lat), lng: num(b.lng), address: clean(b.address, 300), note: clean(b.note, 500), photo: await savePhoto(b.photo), ...(await placeOf(num(b.lat), num(b.lng), b.soi)),
@@ -434,7 +434,7 @@ app.get('/api/status', (req, res) => {
 app.post('/api/missing', guard('missing'), wrap(async (req, res) => {
   const b = req.body || {}; if (!clean(b.personName) || last4(b.reporterPhone).length < 4) return res.status(400).json({ error: S('err.missing', 'กรอกชื่อผู้สูญหายและเบอร์ผู้แจ้ง') });
   const dup = findDup('missing', (x) => x.personName.toLowerCase() === clean(b.personName, 80).toLowerCase() && last4(x.reporterPhone) === last4(b.reporterPhone));
-  if (dup) { confirmDup(dup); return res.json({ ok: true, id: dup.id, merged: true, confirms: dup.confirms }); }
+  if (dup) { confirmDup(dup); return res.json({ ok: true, id: dup.id, merged: true, confirms: dup.confirms || 1 }); }
   const r = { id: newId('M'), personName: clean(b.personName, 80), age: clean(b.age, 10), lastSeen: clean(b.lastSeen, 300), description: clean(b.description, 500), reporterName: clean(b.reporterName, 80), reporterPhone: clean(b.reporterPhone, 20), photo: await savePhoto(b.photo), status: 'searching', createdAt: new Date().toISOString() };
   db.missing.push(r); save(); broadcast('staff:missing', r, true); res.json({ ok: true, id: r.id });
 }));
@@ -442,7 +442,7 @@ app.get('/api/lostfound', (req, res) => res.json(db.lostfound.filter(isPublic).m
 app.post('/api/lostfound', guard('lostfound'), wrap(async (req, res) => {
   const b = req.body || {}; if (!clean(b.title) || last4(b.phone).length < 4) return res.status(400).json({ error: S('err.lf', 'กรอกหัวข้อและเบอร์ติดต่อ') });
   const ty = b.type === 'found' ? 'found' : 'lost', dup = findDup('lostfound', (x) => x.type === ty && x.title.toLowerCase() === clean(b.title, 100).toLowerCase() && last4(x.phone) === last4(b.phone) && !['held', 'rejected'].includes(x.mod));
-  if (dup) { confirmDup(dup); return res.json({ ok: true, id: dup.id, merged: true, confirms: dup.confirms }); }
+  if (dup) { confirmDup(dup); return res.json({ ok: true, id: dup.id, merged: true, confirms: dup.confirms || 1 }); }
   const r = { id: newId('L'), type: b.type === 'found' ? 'found' : 'lost', category: clean(b.category, 30), title: clean(b.title, 100), detail: clean(b.detail, 500), place: clean(b.place, 120), phone: clean(b.phone, 20), photo: await savePhoto(b.photo), status: 'open', src: { ip: req.ip || '', dev: devOf(req) }, createdAt: new Date().toISOString() };
   Object.assign(r, initialMod([r.title, r.detail, r.place, r.category].join(' '), req));
   db.lostfound.push(r); if (r.mod === 'held') sysAudit('mod-held', 'lostfound', r.id, (r.modReasons || []).join(', '));
