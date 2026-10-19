@@ -393,3 +393,18 @@ main:focus,[tabindex="-1"]:focus{outline:none}
 .sh-av b{font-size:1.6rem}.meter{height:8px;background:var(--panel);border:1px solid var(--rule);margin:4px 0 6px}.meter i{display:block;height:100%}
 .filt{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}.filt .fg{margin:0}
 @media (max-width:640px){.stp{grid-template-columns:1fr 1fr;row-gap:14px}}
+/* flood-avoidance routing */
+.rt-veh{border:0;padding:0;margin:0 0 10px;display:flex;flex-wrap:wrap;gap:6px}.rt-veh legend{margin-bottom:6px}
+.rt-veh .chip{display:inline-flex;align-items:center;gap:4px;cursor:pointer}.rt-veh .chip input{position:absolute;opacity:0;pointer-events:none}.rt-veh .chip small{opacity:.75}
+.rt-veh .chip:focus-within{outline:3px solid #1a56b8;outline-offset:2px}
+.rt-key{list-style:none;display:flex;flex-wrap:wrap;gap:12px;padding:6px 0;margin:0;font-size:.85rem}.rt-key i,.rt-w i{display:inline-block;width:14px;height:6px;border-radius:3px;margin-right:6px;vertical-align:middle}
+.rt-alts{list-style:none;padding:0;margin:10px 0;display:grid;gap:8px}
+.rt-alt button{width:100%;text-align:left;display:grid;gap:4px;padding:10px 12px;border:2px solid #d0d5dd;border-radius:8px;background:#fff;cursor:pointer;font:inherit;color:inherit}
+.rt-alt.on button{border-color:#1a56b8;box-shadow:0 0 0 2px #1a56b833}
+.rt-tags{display:flex;gap:6px}.tg{font-size:.78rem;padding:2px 8px;border-radius:99px;background:#e5e7eb}.tg.safest{background:#1a7f37;color:#fff}.tg.fastest{background:#1a56b8;color:#fff}
+.rt-n .bad{color:#c92a2a}.rt-n .ok{color:#1a7f37}
+.rt-w{list-style:none;padding:0;margin:6px 0;display:grid;gap:6px}.rt-w li{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:6px}.rt-w small{color:#5b6472}
+.rt-pin{display:grid;place-items:center;width:26px;height:26px;border-radius:50%;color:#fff;font:700 13px/1 sans-serif;font-style:normal;border:2px solid #fff;box-shadow:0 1px 4px #0006}.rt-pin.a{background:#1a56b8}.rt-pin.b{background:#111827}
+.rt-re{margin:8px 0}#rUrl{width:100%;margin-top:6px;font-size:.85rem}.rt-tgt{margin:6px 0}
+.rt-resc{margin-left:6px}
+@media(min-width:900px){.atlas.rt .atlas-side{max-height:none;overflow:visible}.atlas.rt .atlas-map{position:sticky;top:8px;align-self:start}}

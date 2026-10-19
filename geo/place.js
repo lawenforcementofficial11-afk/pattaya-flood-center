@@ -97,4 +97,5 @@ function sois(q, limit = 30) {
 }
 const byName = (u) => { const n = String(u || '').trim().toLowerCase(); if (!n) return null; const e = LIST.find((x) => x.th.toLowerCase() === n || (x.en && x.en.toLowerCase() === n)); return e ? { th: e.th, en: e.en, kind: e.kind } : null; };
 const meta = { source: 'OpenStreetMap contributors (ODbL 1.0)', fetchedAt: DATA.fetchedAt, osmBase: DATA.osmBase, roads: DATA.roads.length, names: LIST.length, pois: DATA.pois.length, nominatim: ON };
-module.exports = { byName, offline, lookup, nominatim, along, sois, meta, FIELDS, EMPTY };
+const pois = (k) => DATA.pois.filter((p) => p.k === k && (p.th || p.en));
+module.exports = { byName, offline, lookup, nominatim, along, sois, meta, pois, FIELDS, EMPTY };

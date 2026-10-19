@@ -59,6 +59,11 @@ async function init() {
     db.reports.push({ id: newId('R'), areaId: 'central', areaName: 'พัทยากลาง', level: 'knee', lat: 12.9355, lng: 100.889, note: 'ข้อมูลตัวอย่าง', photo: null, status: 'new', confirms: 1, createdAt: now });
     db.shelters.push(...[['ข้อมูลตัวอย่าง: ศูนย์พักพิงโรงเรียน (sample)', 12.9312, 100.8905, 200, 145, ['อาหาร', 'น้ำดื่ม', 'ห้องน้ำ', 'ปฐมพยาบาล']], ['ข้อมูลตัวอย่าง: ศูนย์พักพิงวัด (sample)', 12.9468, 100.8952, 120, 120, ['อาหาร', 'ที่นอน']], ['ข้อมูลตัวอย่าง: ศูนย์พักพิงอาคารกีฬา (sample)', 12.9105, 100.8747, 300, 60, ['อาหาร', 'ไฟฟ้า/ชาร์จโทรศัพท์', 'รับสัตว์เลี้ยง']]].map(([name, lat, lng, capacity, occupancy, facilities]) => ({ id: newId('S'), name, lat, lng, capacity, occupancy, facilities, phone: '1337', contact: 'ศูนย์ประสานงาน', note: '', status: 'open', createdAt: now })));
     db.roads.push({ id: newId('W'), type: 'closed', title: 'ข้อมูลตัวอย่าง: ถนนปิด', note: '', points: [[12.94, 100.887], [12.93, 100.886]], status: 'open', by: 'demo', createdAt: now }); console.log('DEMO_SEED=1: seeded demo data'); }
+  if (DEMO_SEED) { // routing demo hazards (kept fresh on every start so flood-avoidance stays visible)
+    const now = new Date().toISOString(), TAG = 'ข้อมูลตัวอย่าง (เส้นทาง)';
+    if (!db.reports.some((r) => r.note === TAG)) for (const [level, lat, lng] of [['waist', 12.9346, 100.8922], ['knee', 12.92836, 100.88245], ['ankle', 12.944, 100.8956]])
+      db.reports.push({ id: newId('R'), areaId: 'central', areaName: 'พัทยากลาง', level, lat, lng, ...(PLACE.offline(lat, lng) || {}), note: TAG, photo: null, status: 'new', mod: 'verified', modBy: 'demo', confirms: 3, createdAt: now });
+    for (const r of db.reports) if (r.note === TAG) { r.createdAt = now; r.cleared = false; } }
   db.settings = { ...JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), ...(db.settings || {}) };
   { const ok = DEFAULT_SETTINGS.sections.map((s) => s.id); if (!(db.settings.sections || []).some((s) => s.id === 'todo')) db.settings.sections = []; /* design B layout: start from the B default order */ db.settings.sections = (db.settings.sections || []).filter((s) => ok.includes(s.id)); if (!db.settings.sections.length) db.settings.sections = JSON.parse(JSON.stringify(DEFAULT_SETTINGS.sections)); } // v3 dashboard layout: drop section ids of the old home page
   const ids = db.settings.sections.map((s) => s.id); for (const s of DEFAULT_SETTINGS.sections) if (!ids.includes(s.id)) db.settings.sections.push({ ...s });
@@ -785,6 +790,36 @@ app.get('/api/route', wrap(async (req, res) => {
   const gmaps = `https://www.google.com/maps/dir/?api=1&origin=${a.join(',')}&destination=${b.join(',')}&travelmode=driving${via ? '&waypoints=' + encodeURIComponent(via) : ''}`;
   res.json({ ok: true, engine, avoids, warning: avoids ? null : (zones.length ? S('map.warnnoavoid', 'ไม่พบเส้นทางที่เลี่ยงจุดน้ำท่วมได้ทั้งหมด — เส้นทางนี้ผ่านจุดเสี่ยงน้อยที่สุด ใช้ความระมัดระวัง') : null), zonesCount: zones.length, zones, best, alternatives: order.slice(1), gmaps });
 }));
+// ================= in-app flood-avoidance router (OSM graph + A*, per-vehicle depth limits) =================
+const ROUTER = require('./geo/router');
+const HZ_R = { ankle: 120, knee: 180, waist: 250, chest: 300, roof: 350 };
+function routeHazards() {
+  const now = Date.now(), hz = [];
+  for (const r of db.reports) { if (!inRoute(r) || !isPublic(r) || !HZ_R[r.level] || r.lat == null) continue; const ageH = (now - Date.parse(r.createdAt)) / 3600e3; if (ageH > 48 || ageH < -1) continue;
+    hz.push({ id: r.id, type: 'report', lat: r.lat, lng: r.lng, rM: HZ_R[r.level], cm: LEVEL_CM[r.level], level: r.level, decay: +Math.exp(-Math.max(0, ageH) / 12).toFixed(3), soi: r.soi || '', soiEn: r.soiEn || '', road: r.road || '', roadEn: r.roadEn || '', at: r.createdAt }); }
+  for (const w of liveRoads()) if (w.type === 'closed' && (w.points || []).length) { const m = w.points[Math.floor(w.points.length / 2)]; hz.push({ id: w.id, type: 'closed', points: w.points, lat: m[0], lng: m[1], title: w.title, soi: w.soi || '', soiEn: w.soiEn || '', road: w.road || '', roadEn: w.roadEn || '' }); }
+  const from = BKK(new Date(now - 90 * 864e5).toISOString());
+  for (const h of soiHistory(from, null)) if (h.days >= 2 && h.soi) hz.push({ id: 'soi:' + h.soi, type: 'repeat', lat: h.lat, lng: h.lng, rM: 150, cm: h.maxCm, level: h.maxLevel, decay: 1, soi: h.soi, soiEn: h.soiEn, road: h.road || '', days: h.days });
+  return hz;
+}
+const pt = (s) => { const [a, b] = String(s || '').split(',').map(num); return a != null && b != null && inPattaya(a, b) ? [a, b] : null; };
+const hzPub = (hz) => hz.map((h) => ({ id: h.id, type: h.type, lat: h.lat, lng: h.lng, rM: h.rM || 0, level: h.level || null, cm: h.cm || null, decay: h.decay ?? 1, soi: h.soi, soiEn: h.soiEn, road: h.road, roadEn: h.roadEn, title: h.title || '', points: h.points || null, days: h.days || null }));
+app.get('/api/route2/meta', (req, res) => res.json(ROUTER.meta));
+app.get('/api/route2/hazards', (req, res) => res.json(hzPub(routeHazards())));
+app.get('/api/route2', (req, res) => {
+  const a = pt(req.query.from), b = pt(req.query.to); if (!a || !b) return res.status(400).json({ error: S('err.routeoutside', 'จุดเริ่มและปลายทางต้องอยู่ในเขตเมืองพัทยา') });
+  const hz = routeHazards(), r = ROUTER.plan(a, b, String(req.query.veh || 'car'), hz);
+  if (r.error) return res.status(404).json({ error: S('rt.noroute', 'ไม่พบเส้นทางบนโครงข่ายถนน'), code: r.error });
+  res.json({ ...r, from: a, to: b, hazards: hzPub(hz), graph: { osmBase: ROUTER.meta.osmBase } });
+});
+app.get('/api/route2/nearest', (req, res) => {
+  const a = pt(req.query.from), type = req.query.type === 'hospital' ? 'hospital' : 'shelter', v = String(req.query.veh || 'car'); if (!a) return res.status(400).json({ error: S('err.routeoutside', 'จุดเริ่มและปลายทางต้องอยู่ในเขตเมืองพัทยา') });
+  const cands = type === 'hospital' ? PLACE.pois('hospital').map((p) => ({ name: p.th || p.en, nameEn: p.en || p.th, lat: p.lat, lng: p.lng }))
+    : pubShelters().filter((s) => s.status === 'open' && s.available > 0).map((s) => ({ id: s.id, name: s.name, nameEn: s.name, lat: s.lat, lng: s.lng, available: s.available, phone: s.phone }));
+  const hz = routeHazards(), i = ROUTER.nearest(a, v, cands, hz); if (i < 0) return res.status(404).json({ error: S('rt.nonear', 'ไม่พบจุดหมายที่ไปถึงได้') });
+  const t = cands[i], r = ROUTER.plan(a, [t.lat, t.lng], v, hz); if (r.error) return res.status(404).json({ error: S('rt.noroute', 'ไม่พบเส้นทางบนโครงข่ายถนน') });
+  res.json({ ...r, from: a, to: [t.lat, t.lng], target: { ...t, type }, hazards: hzPub(hz), graph: { osmBase: ROUTER.meta.osmBase } });
+});
 // ================= shelters · "I'm safe" check-ins · executive dashboard · daily PDF · repeat-flood history by soi =================
 const BKK = (iso) => new Date(Date.parse(iso) + 7 * 3600e3).toISOString().slice(0, 10); // calendar day in Asia/Bangkok
 const dayStart = (d) => Date.parse(d + 'T00:00:00+07:00');
