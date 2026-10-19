@@ -28,7 +28,7 @@ async function boot() {
   if (!window.__routeBound) { window.__routeBound = true; addEventListener('hashchange', () => { if (SC) route(); }); } route();
 }
 function nav(cur) {
-  const items = [['dash', '📊 ภาพรวม'], ['mod', '🛂 ตรวจสอบรายงาน'], ...Object.entries(SC.colls).filter(([k, c]) => c.triage || can('admin')).map(([k, c]) => ['c/' + k, c.label.split(' (')[0]]),
+  const items = [['dash', '📊 ภาพรวม'], ['exec', '📈 แดชบอร์ดผู้บริหาร'], ...(can('admin') ? [['daily', '📄 รายงานประจำวัน (PDF)']] : []), ['mod', '🛂 ตรวจสอบรายงาน'], ...Object.entries(SC.colls).filter(([k, c]) => c.triage || can('admin')).map(([k, c]) => ['c/' + k, c.label.split(' (')[0]]),
     ...(can('admin') ? [['roadq', '🚧 อนุมัติถนนปิด'], ['audit', '🧾 ประวัติการแก้ไข']] : []), ...(can('superadmin') ? [['ptycctv', '📹 กล้องเมืองพัทยา'], ['texts', '📝 ข้อความทั้งเว็บ'], ['settings', '🎨 ตั้งค่าเว็บ'], ['antispam', '🛡️ กันสแปม'], ['users', '👥 ผู้ใช้']] : []), ['me', '🔑 รหัสผ่านของฉัน'], ['logout', '🚪 ออก']];
   $('#nav').innerHTML = items.map(([h, l]) => `<a href="#${h}" class="${h === cur ? 'on' : ''}">${esc(l)}</a>`).join('');
   modBadgeNav(); roadBadgeNav(); $('#nav .on')?.scrollIntoView({ inline: 'center', block: 'nearest' });
@@ -36,9 +36,9 @@ function nav(cur) {
 async function route() {
   document.querySelectorAll('.modal').forEach((m) => m.remove()); sseL.clear(); app.onclick = app.onchange = app.oninput = null; if (typeof modMap !== 'undefined' && modMap) { try { modMap.remove(); } catch {} modMap = null; } /* page handlers on #app must not leak into the next page */ const h = location.hash.slice(1) || 'dash'; nav(h); window.scrollTo(0, 0); app.innerHTML = '<p class="muted">กำลังโหลด…</p>';
   try { if (h === 'logout') { await api('/api/staff/logout', { method: 'POST' }); SC = null; history.replaceState(null, '', location.pathname); return showLogin(); }
-    if (h.startsWith('c/')) return await collPage(h.slice(2)); await ({ dash, mod: modPage, texts, settings, antispam, users, audit, me, ptycctv, roadq: roadqPage }[h] || dash)(); } catch (e) { if (SC && !$('#lf')) app.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+    if (h.startsWith('c/')) return await collPage(h.slice(2)); await ({ dash, exec: execPage, daily: dailyPage, mod: modPage, texts, settings, antispam, users, audit, me, ptycctv, roadq: roadqPage }[h] || dash)(); } catch (e) { if (SC && !$('#lf')) app.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
 }
-const stName = (s) => SC.statusNames[s] || s;
+const stName = (s) => SC.statusNames[s] || { open: 'เปิด', full: 'เต็ม', closed: 'ปิด', hidden: 'ซ่อน' }[s] || s;
 
 async function dash() {
   const s = await api('/api/admin/stats'); const c = s.colls;
@@ -63,12 +63,12 @@ async function collPage(k) {
   const val = (f, v) => f.type === 'b' ? (v ? '✔' : '—') : f.k === 'kind' && k === 'requests' ? esc(SC.kinds[v] || v) : f.k === 'level' ? esc(SC.levels[v] || v) : Array.isArray(v) ? esc(v.join(', ')) : esc(v ?? '');
   app.innerHTML = `<div class="card"><h2>${esc(C.label)}</h2>
    <div class="bar"><input id="q" placeholder="ค้นหา (ชื่อ เบอร์ พื้นที่ รหัส …)">${C.statuses.length ? `<select id="fs"><option value="">ทุกสถานะ</option>${C.statuses.map((s) => `<option value="${s}">${esc(stName(s))}</option>`).join('')}</select>` : ''}${typeOpts.length ? `<select id="ft"><option value="">ทุกประเภท</option>${typeOpts.map((t) => `<option value="${esc(t)}">${esc(SC.kinds[t] || t)}</option>`).join('')}</select>` : ''}<select id="fd"><option value="">ทุกช่วงเวลา</option><option value="24">24 ชม.</option><option value="72">3 วัน</option><option value="168">7 วัน</option></select></div>
-   <div class="bar"><span id="cnt" class="muted"></span>${C.statuses.length ? `<select id="bs"><option value="">— เปลี่ยนสถานะที่เลือก —</option>${C.statuses.filter(stOk).map((s) => `<option value="${s}">${esc(stName(s))}</option>`).join('')}</select>` : ''}${can('superadmin') ? '<button class="btn sm red" id="bd">ลบที่เลือก</button>' : ''}<a class="btn sm alt" href="/api/admin/c/${k}/export.csv">⬇ CSV</a>${C.create && can('superadmin') ? '<button class="btn sm" id="add">+ เพิ่ม</button>' : ''}${k === 'roads' ? '<a class="btn sm" href="/#/staff">วาดเส้นทางบนแผนที่</a>' : ''}</div>
+   <div class="bar"><span id="cnt" class="muted"></span>${C.statuses.length ? `<select id="bs"><option value="">— เปลี่ยนสถานะที่เลือก —</option>${C.statuses.filter(stOk).map((s) => `<option value="${s}">${esc(stName(s))}</option>`).join('')}</select>` : ''}${can('superadmin') ? '<button class="btn sm red" id="bd">ลบที่เลือก</button>' : ''}<a class="btn sm alt" href="/api/admin/c/${k}/export.csv">⬇ CSV</a>${C.create && (can('superadmin') || (C.adminEdit && can('admin'))) ? '<button class="btn sm" id="add">+ เพิ่ม</button>' : ''}${k === 'roads' ? '<a class="btn sm" href="/#/staff">วาดเส้นทางบนแผนที่</a>' : ''}</div>
    <div style="overflow:auto"><table><thead><tr><th><input type="checkbox" class="rowsel" id="all"></th><th>รหัส</th>${show.map((f) => `<th>${esc(f.label)}</th>`).join('')}${C.statuses.length ? '<th>สถานะ</th>' : ''}<th class="hide-m">เวลา</th><th></th></tr></thead><tbody id="tb"></tbody></table></div></div>`;
   const filtered = () => { const q = $('#q').value.trim().toLowerCase(), fs = $('#fs')?.value, ft = $('#ft')?.value, fd = +$('#fd').value;
     return items.filter((x) => (!fs || x.status === fs) && (!ft || x[C.typeField] === ft) && (!fd || Date.parse(x.createdAt) > Date.now() - fd * 3600e3) && (!q || JSON.stringify(x).toLowerCase().includes(q))); };
   const draw = () => { const L = filtered(); $('#cnt').textContent = `${L.length} รายการ · เลือก ${sel.size}`;
-    $('#tb').innerHTML = L.map((x) => `<tr class="${sel.has(x.id) ? 'sel' : ''}"><td><input type="checkbox" class="rowsel" data-id="${esc(x.id)}" ${sel.has(x.id) ? 'checked' : ''}></td><td><b>${esc(x.id)}</b>${x.photo ? '<br>📷' : ''}</td>${show.map((f) => `<td>${val(f, x[f.k])}</td>`).join('')}${C.statuses.length ? `<td><span class="pill">${esc(stName(x.status))}</span></td>` : ''}<td class="hide-m muted">${fmt(x.createdAt)}</td><td><button class="btn sm alt ed" data-id="${esc(x.id)}">${can('superadmin') ? 'แก้ไข' : C.triage ? 'ดู/สถานะ' : 'ดู'}</button></td></tr>`).join('') || `<tr><td colspan="9" class="muted">ไม่มีรายการ</td></tr>`; };
+    $('#tb').innerHTML = L.map((x) => `<tr class="${sel.has(x.id) ? 'sel' : ''}"><td><input type="checkbox" class="rowsel" data-id="${esc(x.id)}" ${sel.has(x.id) ? 'checked' : ''}></td><td><b>${esc(x.id)}</b>${x.photo ? '<br>📷' : ''}</td>${show.map((f) => `<td>${val(f, x[f.k])}</td>`).join('')}${C.statuses.length ? `<td><span class="pill">${esc(stName(x.status))}</span></td>` : ''}<td class="hide-m muted">${fmt(x.createdAt)}</td><td><button class="btn sm alt ed" data-id="${esc(x.id)}">${can('superadmin') || (C.adminEdit && can('admin')) ? 'แก้ไข' : C.triage ? 'ดู/สถานะ' : 'ดู'}</button></td></tr>`).join('') || `<tr><td colspan="9" class="muted">ไม่มีรายการ</td></tr>`; };
   const reload = async () => { items = await api('/api/admin/c/' + k); draw(); };
   ['q', 'fs', 'ft', 'fd'].forEach((id) => $('#' + id) && ($('#' + id).oninput = draw));
   $('#tb').onclick = (e) => { const id = e.target.dataset.id; if (e.target.classList.contains('rowsel')) { e.target.checked ? sel.add(id) : sel.delete(id); draw(); } if (e.target.classList.contains('ed')) edit(k, items.find((x) => x.id === id), reload); };
@@ -79,7 +79,7 @@ async function collPage(k) {
   draw();
 }
 function edit(k, x, done) {
-  const C = SC.colls[k], sup = can('superadmin'), stEdit = sup || C.triage, ro = !stEdit, isNew = !x; x ||= {};
+  const C = SC.colls[k], sup = can('superadmin') || (C.adminEdit && can('admin')), stEdit = sup || C.triage, ro = !stEdit, isNew = !x; x ||= {};
   const input = (f) => { const v = x[f.k], dis = !sup || (k === 'areas' && f.k === 'id' && !isNew) ? 'disabled' : '';
     if (f.type === 'b') return `<label><input type="checkbox" data-f="${f.k}" ${v ? 'checked' : ''} ${dis} style="width:auto"> ${esc(f.label)}</label><br>`;
     if (f.type === 'select') return `<label>${esc(f.label)}</label><select data-f="${f.k}" ${dis}>${f.options.map((o) => `<option value="${o}" ${o === v ? 'selected' : ''}>${esc((f.k === 'kind' && SC.kinds[o]) || (f.k === 'level' && SC.levels[o]) || o || '—')}</option>`).join('')}</select>`;
@@ -149,9 +149,9 @@ async function modPage() {
   const LV = SC.levels || {}; const sel = new Set();
   const card = (x) => `<div class="mq ${x.mod}" data-k="${x.coll}|${esc(x.id)}"><label class="mqsel"><input type="checkbox" class="rowsel" data-k="${x.coll}|${esc(x.id)}"></label>
     ${x.photo ? `<a href="${esc(x.photo)}" target="_blank"><img class="mqimg" src="${esc(x.photo)}"></a>` : '<div class="mqimg none">ไม่มีรูป</div>'}
-    <div class="mqbody"><b>${esc(x.id)}</b> <span class="pill ${x.mod}">${x.mod === 'held' ? '⛔ กักไว้ (ซ่อน)' : '⏳ รอตรวจสอบ'}</span> <span class="pill">${x.coll === 'reports' ? '📏 ระดับน้ำ' : '🐾 ของหาย–ได้คืน'}</span>
-      <div>${x.coll === 'reports' ? `<b>${esc(LV[x.level] || x.level)}</b> · ${esc(x.areaName || '')}` : `<b>${esc(x.type === 'lost' ? 'ตามหา' : 'เก็บได้')}: ${esc(x.title)}</b> · ${esc(x.place || '')}`}</div>
-      <div>${esc(x.note || x.detail || '')}</div>
+    <div class="mqbody"><b>${esc(x.id)}</b> <span class="pill ${x.mod}">${x.mod === 'held' ? '⛔ กักไว้ (ซ่อน)' : '⏳ รอตรวจสอบ'}</span> <span class="pill">${x.coll === 'reports' ? '📏 ระดับน้ำ' : x.coll === 'safe' ? '🙋 ฉันปลอดภัย' : '🐾 ของหาย–ได้คืน'}</span>
+      <div>${x.coll === 'reports' ? `<b>${esc(LV[x.level] || x.level)}</b> · ${esc(x.areaName || '')}` : x.coll === 'safe' ? `<b>${esc(x.name)}</b> · ${esc([x.areaName, x.soi].filter(Boolean).join(' · '))}` : `<b>${esc(x.type === 'lost' ? 'ตามหา' : 'เก็บได้')}: ${esc(x.title)}</b> · ${esc(x.place || '')}`}</div>
+      <div>${esc(x.note || x.detail || x.message || '')}</div>
       <div class="muted">${fmt(x.createdAt)} · 👍 ${x.yes} · 🌤️ ${x.no}${x.cleared ? ' · อาจไม่ท่วมแล้ว' : ''}${x.modReasons?.length ? ' · <span class="err">' + x.modReasons.map((r) => esc(REASON(r))).join(', ') + '</span>' : ''}${x.src?.ip ? ` · IP <code>${esc(x.src.ip)}</code>` : ''}</div>
       <div class="bar" style="margin:6px 0 0"><button class="btn sm ok1" data-a="approve">✔ อนุมัติ</button>${can('admin') ? `<button class="btn sm alt" data-a="reject">✖ ปฏิเสธ</button>${x.mod === 'pending' ? '<button class="btn sm alt" data-a="hold">⛔ กักไว้</button>' : ''}` : ''}${x.lat ? `<button class="btn sm alt" data-a="zoom">🗺️</button>` : ''}</div></div></div>`;
   const P = d.items.filter((x) => x.mod === 'pending'), H = d.items.filter((x) => x.mod === 'held');
@@ -279,3 +279,37 @@ async function roadqPage() {
 
 // developer credit (CMS key site.credit)
 fetch('/api/config?lang=th').then((r) => r.json()).then((c) => { const t = c.texts && c.texts['site.credit']; const el = document.getElementById('credit'); if (t && el) el.textContent = t; }).catch(() => {});
+
+// ---------- executive dashboard (read-only for every role) ----------
+let execMap = null;
+async function execPage() {
+  const d = await api('/api/admin/exec'), S = d.shelters, pct = S.capacity ? Math.round((S.occupancy / S.capacity) * 100) : 0;
+  const card = (n, l, sub = '') => `<div class="stat"><small>${l}</small><b>${n}</b><small>${sub}</small></div>`;
+  const LVC = { dry: '#1b7f4b', ankle: '#e0b000', knee: '#ef7d22', waist: '#c8321f', chest: '#5e2a84', roof: '#2d1446' };
+  const hmax = Math.max(1, ...d.reportsByHour24h);
+  app.innerHTML = `<h2>📈 แดชบอร์ดผู้บริหาร <small class="muted">อัปเดต ${fmt(d.generatedAt)} · อ่านอย่างเดียว</small></h2>
+   <div class="stats">${card(d.openRequests, 'คำขอที่ยังเปิด', Object.entries(d.openByKind).map(([k, n]) => `${esc(d.kinds[k] || k)} ${n}`).join(' · '))}${card(d.pendingRequests, 'รอคัดกรอง (ใหม่)')}
+    ${card(d.avgResponseMin == null ? '–' : d.avgResponseMin + ' นาที', 'เวลาตอบสนองเฉลี่ย', `จาก ${d.responded} เคส · ปิดเคสเฉลี่ย ${d.avgResolveMin == null ? '–' : d.avgResolveMin + ' นาที'}`)}${card(d.reports24h, 'รายงานระดับน้ำ 24 ชม.')}
+    ${card(d.closures, 'ถนนปิดที่ยังมีผล', `ทางเลี่ยง ${d.detours}`)}${card(`${S.occupancy}/${S.capacity}`, 'ผู้พักในศูนย์พักพิง', `${pct}% · เปิด ${S.open} · เต็ม ${S.full}`)}${card(d.safe.total, 'เช็กอิน "ฉันปลอดภัย"')}</div>
+   <div class="grid two" style="margin-top:12px"><div class="card"><h3>แผนที่ความหนาแน่นรายงาน (7 วัน)</h3><div id="hm" style="height:340px"></div><p class="muted">สีเข้ม/ใหญ่ = มีรายงานมากและน้ำสูง</p></div>
+    <div class="card"><h3>รายงาน 24 ชม. ตามชั่วโมง</h3><div class="hbars" style="display:flex;align-items:flex-end;gap:2px;height:120px">${d.reportsByHour24h.map((v, i) => `<span title="${v}" style="flex:1;background:#1a56b8;height:${(v / hmax) * 100}%;min-height:1px"></span>`).join('')}</div><p class="muted">ซ้าย = 24 ชม. ก่อน · ขวา = ตอนนี้</p>
+     <h3>ตามระดับน้ำ (24 ชม.)</h3><ul class="list">${Object.entries(d.levels).map(([k, v]) => `<li><span><i style="display:inline-block;width:10px;height:10px;background:${LVC[k]}"></i> ${esc(v)}</span><b>${d.reportsByLevel24h[k] || 0}</b></li>`).join('')}</ul></div></div>
+   <div class="grid two" style="margin-top:12px"><div class="card"><h3>ภาระงานแต่ละทีม</h3><table class="tbl"><tr><th>ทีม</th><th>ยังเปิด</th><th>กำลังเดินทาง</th><th>เสร็จแล้ว</th><th>รวม</th></tr>${d.teams.map((t) => `<tr><td>${esc(t.team || '(ยังไม่มอบหมาย)')}</td><td><b>${t.open}</b></td><td>${t.enroute}</td><td>${t.done}</td><td>${t.total}</td></tr>`).join('') || '<tr><td colspan=5 class="muted">ไม่มีข้อมูล</td></tr>'}</table></div>
+    <div class="card"><h3>ศูนย์พักพิง</h3><table class="tbl"><tr><th>ชื่อ</th><th>ผู้พัก/รับได้</th><th>สถานะ</th></tr>${S.list.map((s) => `<tr><td>${esc(s.name)}</td><td>${s.occupancy}/${s.capacity}</td><td>${esc(stName(s.status))}</td></tr>`).join('') || '<tr><td colspan=3 class="muted">ยังไม่มีศูนย์พักพิง</td></tr>'}</table></div></div>`;
+  if (execMap) { try { execMap.remove(); } catch {} } execMap = L.map('hm').setView([12.928, 100.886], 12); L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' }).addTo(execMap);
+  const cells = {}; for (const [la, ln, cm] of d.heat) { const k = (Math.round(la / 0.004) * 0.004).toFixed(3) + ',' + (Math.round(ln / 0.004) * 0.004).toFixed(3); const c = (cells[k] ||= { la: 0, ln: 0, n: 0, cm: 0 }); c.la += la; c.ln += ln; c.n++; c.cm = Math.max(c.cm, cm); }
+  const nmax = Math.max(1, ...Object.values(cells).map((c) => c.n));
+  for (const c of Object.values(cells)) L.circle([c.la / c.n, c.ln / c.n], { radius: 180 + 320 * (c.n / nmax), stroke: false, fillColor: c.cm >= 115 ? '#7a0c0c' : c.cm >= 75 ? '#c8321f' : c.cm >= 30 ? '#ef7d22' : '#e0b000', fillOpacity: 0.25 + 0.5 * (c.n / nmax) }).addTo(execMap).bindTooltip(`${c.n} รายงาน`);
+  setTimeout(() => execMap.invalidateSize(), 100);
+  let t; sseL.add(() => { clearTimeout(t); t = setTimeout(() => location.hash === '#exec' && execPage(), 1500); });
+}
+// ---------- daily PDF (admin+) ----------
+async function dailyPage() {
+  const today = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10), list = await api('/api/admin/reports').catch(() => []);
+  app.innerHTML = `<div class="card"><h2>📄 รายงานสถานการณ์ประจำวัน (PDF)</h2><p class="muted">สรุปตัวเลขสำคัญ แผนที่ กราฟ ซอยที่มีรายงาน และภาระงานทีม ฟอนต์ไทย Sarabun · ไม่มีชื่อหรือเบอร์โทรของประชาชน</p>
+   <label for="dd">วันที่</label><input id="dd" type="date" value="${today}" style="width:auto"> <a class="btn" id="open" target="_blank" href="#">เปิดดู</a> <a class="btn alt" id="dl" href="#">⬇ ดาวน์โหลด</a> <button class="btn alt" id="gen">บันทึกเก็บในเซิร์ฟเวอร์</button>
+   <p class="muted">สร้างอัตโนมัติตามเวลา: ให้ตัวตั้งเวลา (เช่น Render Cron) เรียก <code>POST /api/report/daily/generate?token=EXPORT_TOKEN</code> วันละครั้ง ระบบจะบันทึกไฟล์ไว้ในรายการด้านล่าง (ไม่ได้ส่งอีเมล/LINE)</p>
+   <h3>ไฟล์ที่บันทึกไว้</h3><ul class="list" id="fl">${list.map((f) => `<li><a href="/api/admin/reports/${esc(f.file)}" target="_blank">${esc(f.file)}</a><span class="muted">${Math.round(f.bytes / 1024)} KB</span></li>`).join('') || '<li class="muted">ยังไม่มี</li>'}</ul></div>`;
+  const upd = () => { const d = $('#dd').value; $('#open').href = '/api/admin/report/daily.pdf?date=' + d; $('#dl').href = '/api/admin/report/daily.pdf?dl=1&date=' + d; }; upd(); $('#dd').onchange = upd;
+  $('#gen').onclick = async () => { try { const r = await api('/api/report/daily/generate?date=' + $('#dd').value, { method: 'POST' }); toast('บันทึก ' + r.file); dailyPage(); } catch (e) { toast(e.message, false); } };
+}

@@ -24,13 +24,13 @@ function pickLang(req) {
 const DEMO_SEED = process.env.DEMO_SEED === '1';
 const TURNSTILE = process.env.TURNSTILE_SITE_KEY && process.env.TURNSTILE_SECRET ? { site: process.env.TURNSTILE_SITE_KEY, secret: process.env.TURNSTILE_SECRET } : null;
 const AS_DEFAULT = { on: true, honeypot: true, minFillSec: 3, dedupe: true, dedupeMin: 10, dedupeMeters: 150, maxPhotoMB: 3,
-  limits: { reports: { n: 5, min: 10 }, requests: { n: 3, min: 10 }, missing: { n: 3, min: 10 }, lostfound: { n: 5, min: 10 } }, blocked: [] };
+  limits: { reports: { n: 5, min: 10 }, requests: { n: 3, min: 10 }, missing: { n: 3, min: 10 }, lostfound: { n: 5, min: 10 }, safe: { n: 3, min: 10 } }, blocked: [] };
 // Hybrid moderation for citizen-published content (water reports + lost&found). Help/evacuation/medical requests and missing persons
 // are NEVER moderated: they always go straight to staff. Closed roads/detours are staff-created only (no citizen path) → always live.
 // mod: pending (public but faded in hybrid) · verified · held (hidden, needs staff) · rejected
 const MOD_DEFAULT = { mode: 'hybrid', autoVerifyN: 2, clearN: 2, distinctIp: true, holdLinks: true, holdPhones: true, voteLimit: { n: 20, min: 10 }, flagged: [],
   words: ['เหี้ย', 'ควย', 'สัส', 'เย็ด', 'อีดอก', 'อีเหี้ย', 'ไอ้สัตว์', 'ส้นตีน', 'แม่มึง', 'พ่อมึง', 'บาคาร่า', 'สล็อต', 'เว็บพนัน', 'คาสิโน', 'fuck', 'shit', 'bitch', 'asshole', 'casino', 'slot', 'baccarat', 'porn', 'viagra'] };
-const MOD_COLLS = ['reports', 'lostfound'];
+const MOD_COLLS = ['reports', 'lostfound', 'safe'];
 
 // ---------- storage ----------
 let db;
@@ -44,7 +44,7 @@ async function init() {
   if (store.kind === 'postgres' && !db.contacts && fs.existsSync(path.join(DATA_DIR, 'db.json'))) { try { db = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'db.json'), 'utf8')); console.log('imported data/db.json into Postgres'); } catch {} }
   const seed = require('./seed-contacts');
   db.contacts ||= JSON.parse(JSON.stringify(seed));
-  for (const k of ['reports', 'requests', 'missing', 'lostfound', 'audit', 'roads', 'users']) db[k] ||= [];
+  for (const k of ['reports', 'requests', 'missing', 'lostfound', 'audit', 'roads', 'users', 'shelters', 'safe']) db[k] ||= [];
   for (const w of db.roads) if (!w.approval) { w.approval = 'approved'; w.approvedBy ||= 'migration'; w.approvedAt ||= w.createdAt; } // road approval workflow: pre-existing roads stay live
   db.seq ||= 1000; db.texts ||= {}; db.i18n ||= {}; for (const l of ['en', 'zh']) db.i18n[l] ||= {};
   db.geofence = { ...GEO_DEFAULT, ...(db.geofence || {}) };
@@ -53,10 +53,11 @@ async function init() {
   db.antispam = { ...JSON.parse(JSON.stringify(AS_DEFAULT)), ...(db.antispam || {}) }; db.antispam.limits = { ...AS_DEFAULT.limits, ...db.antispam.limits };
   // remove seeded demo / test data unless DEMO_SEED=1
   if (!DEMO_SEED) { const isDemo = (x) => /ทดสอบ|ข้อมูลตัวอย่าง/.test(JSON.stringify(x)); let n = 0;
-    for (const k of ['reports', 'requests', 'missing', 'lostfound', 'roads']) { const before = db[k].length; db[k] = db[k].filter((x) => !isDemo(x)); n += before - db[k].length; }
+    for (const k of ['reports', 'requests', 'missing', 'lostfound', 'roads', 'shelters', 'safe']) { const before = db[k].length; db[k] = db[k].filter((x) => !isDemo(x)); n += before - db[k].length; }
     if (n) console.log(`removed ${n} demo/test records (set DEMO_SEED=1 to keep/seed demo data)`); }
   else if (!db.reports.length) { const now = new Date().toISOString();
     db.reports.push({ id: newId('R'), areaId: 'central', areaName: 'พัทยากลาง', level: 'knee', lat: 12.9355, lng: 100.889, note: 'ข้อมูลตัวอย่าง', photo: null, status: 'new', confirms: 1, createdAt: now });
+    db.shelters.push(...[['ข้อมูลตัวอย่าง: ศูนย์พักพิงโรงเรียน (sample)', 12.9312, 100.8905, 200, 145, ['อาหาร', 'น้ำดื่ม', 'ห้องน้ำ', 'ปฐมพยาบาล']], ['ข้อมูลตัวอย่าง: ศูนย์พักพิงวัด (sample)', 12.9468, 100.8952, 120, 120, ['อาหาร', 'ที่นอน']], ['ข้อมูลตัวอย่าง: ศูนย์พักพิงอาคารกีฬา (sample)', 12.9105, 100.8747, 300, 60, ['อาหาร', 'ไฟฟ้า/ชาร์จโทรศัพท์', 'รับสัตว์เลี้ยง']]].map(([name, lat, lng, capacity, occupancy, facilities]) => ({ id: newId('S'), name, lat, lng, capacity, occupancy, facilities, phone: '1337', contact: 'ศูนย์ประสานงาน', note: '', status: 'open', createdAt: now })));
     db.roads.push({ id: newId('W'), type: 'closed', title: 'ข้อมูลตัวอย่าง: ถนนปิด', note: '', points: [[12.94, 100.887], [12.93, 100.886]], status: 'open', by: 'demo', createdAt: now }); console.log('DEMO_SEED=1: seeded demo data'); }
   db.settings = { ...JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), ...(db.settings || {}) };
   { const ok = DEFAULT_SETTINGS.sections.map((s) => s.id); if (!(db.settings.sections || []).some((s) => s.id === 'todo')) db.settings.sections = []; /* design B layout: start from the B default order */ db.settings.sections = (db.settings.sections || []).filter((s) => ok.includes(s.id)); if (!db.settings.sections.length) db.settings.sections = JSON.parse(JSON.stringify(DEFAULT_SETTINGS.sections)); } // v3 dashboard layout: drop section ids of the old home page
@@ -68,7 +69,7 @@ async function init() {
   for (const k of ['health', 'emergency']) for (const x of db.contacts[k]) x.id ||= newId(k === 'health' ? 'H' : 'E');
   if (!db.users.length) { db.users.push({ id: newId('U'), username: ADMIN_USERNAME, name: 'ผู้ดูแลระบบ', role: 'superadmin', hash: bcrypt.hashSync(STAFF_PASSWORD, 10), active: true, pwv: 1, createdAt: new Date().toISOString() }); console.log(`bootstrapped superadmin "${ADMIN_USERNAME}" from STAFF_PASSWORD`); }
   if (db.audit.length > 5000) db.audit = db.audit.slice(-5000);
-  db.geocache ||= {}; backfillPlaces();
+  db.geocache ||= {}; backfillPlaces(); for (const s of db.shelters) if (s.placeSrc === undefined) shelterPlace(s);
   save();
 }
 let saveT, saving = Promise.resolve();
@@ -418,7 +419,7 @@ app.get('/api/status', (req, res) => {
   const r = db.requests.find((x) => x.id.toUpperCase() === String(req.query.id || '').trim().toUpperCase());
   if (!r || last4(r.phone) !== last4(req.query.phone) || !last4(req.query.phone)) return res.status(404).json({ error: S('err.nocase', 'ไม่พบเคส ตรวจเลขเคสและเบอร์ 4 ตัวท้าย') });
   const ST = STATUS_TEXT();
-  res.json({ id: r.id, kind: KINDS()[r.kind], areaName: r.areaName, status: r.status, statusText: ST[r.status] || r.statusText, assignee: r.assignee, history: r.history.map((h) => ({ at: h.at, s: ST[h.s] || h.s, note: h.note })), createdAt: r.createdAt });
+  res.json({ id: r.id, kind: KINDS()[r.kind], areaName: r.areaName, status: r.status, statusText: ST[r.status] || r.statusText, assignee: r.assignee, history: r.history.map((h) => ({ at: h.at, s: ST[h.s] || h.s, code: h.s, note: h.note })), createdAt: r.createdAt });
 });
 
 // missing persons (private) & lost-found (public)
@@ -485,6 +486,7 @@ function afterChange(c, item) {
   if (item) broadcast('staff:update', { coll: c, item }, true);
   if (c === 'requests' && item) broadcast('request', publicRequest(item)); if (c === 'reports' && item) broadcast('report', publicReport(item));
   if (c === 'roads') { broadcast('roads', liveRoads()); broadcast('staff:roadq', { total: pendingRoads() }, true); } if (['areas', 'health', 'emergency'].includes(c)) broadcast('contacts', db.contacts);
+  if (c === 'shelters') { if (item) { shelterPlace(item); item.updatedAt = new Date().toISOString(); } broadcast('shelters', pubShelters()); }
   if (['cctv', 'links'].includes(c)) broadcast('cms', { coll: c }); if (c === 'lostfound') broadcast('lostfound', {});
 }
 function setStatus(req, c, r, status, note) {
@@ -545,6 +547,8 @@ const COLLS = {
   missing: { label: 'ตามหาคน', arr: () => db.missing, triage: true, statuses: ['searching', 'found', 'closed'], fields: [F('personName', 'ชื่อผู้สูญหาย'), F('age', 'อายุ'), F('lastSeen', 'พบครั้งสุดท้าย', 't'), F('description', 'ลักษณะ', 't'), F('reporterName', 'ผู้แจ้ง'), F('reporterPhone', 'เบอร์ผู้แจ้ง')] },
   lostfound: { label: 'ของหาย–ได้คืน', arr: () => db.lostfound, triage: true, typeField: 'type', statuses: ['open', 'closed', 'hidden'], fields: [F('type', 'ประเภท', 'select', { options: ['lost', 'found'] }), F('category', 'หมวด'), F('title', 'หัวข้อ'), F('detail', 'รายละเอียด', 't'), F('place', 'สถานที่'), F('phone', 'เบอร์')] },
   roads: { label: 'เส้นทางเลี่ยง / ถนนปิด', arr: () => db.roads, triage: true, typeField: 'type', statuses: ['open', 'hidden'], fields: [F('type', 'ประเภท', 'select', { options: ['detour', 'closed'] }), F('title', 'ชื่อ'), F('soi', 'ซอย (จุดกึ่งกลาง)'), F('road', 'ถนน'), F('along', 'ถนน/ซอยที่ผ่าน'), F('landmark', 'จุดสังเกตใกล้เคียง'), F('note', 'หมายเหตุ', 't')] },
+  shelters: { label: 'ศูนย์พักพิง', arr: () => db.shelters, create: true, adminEdit: true, prefix: 'S', statuses: ['open', 'full', 'closed', 'hidden'], fields: [F('name', 'ชื่อศูนย์พักพิง'), F('capacity', 'รับได้ (คน)', 'n'), F('occupancy', 'ผู้พักตอนนี้ (คน)', 'n'), F('facilities', 'สิ่งอำนวยความสะดวก (คั่นด้วย ,)', 'list'), F('contact', 'ผู้ติดต่อ'), F('phone', 'เบอร์โทร'), F('lat', 'ละติจูด', 'n'), F('lng', 'ลองจิจูด', 'n'), F('note', 'หมายเหตุ', 't')] },
+  safe: { label: 'ฉันปลอดภัย (เช็กอิน)', arr: () => db.safe, adminEdit: true, statuses: ['open', 'hidden'], fields: [F('name', 'ชื่อ'), F('areaName', 'พื้นที่'), F('soi', 'ซอย'), F('phone', 'เบอร์โทร (ไม่แสดงต่อสาธารณะ)'), F('message', 'ข้อความ', 't')] },
   areas: { label: 'พื้นที่ / ผู้ประสานงาน (พื้นที่ที่ให้บริการ)', arr: () => db.contacts.areas, create: true, fields: [F('id', 'รหัสพื้นที่ (a-z)'), F('name', 'ชื่อพื้นที่'), F('org', 'หน่วยงาน'), F('coordinator', 'ผู้ประสานงาน'), F('phone', 'เบอร์โทร'), F('lat', 'ละติจูด', 'n'), F('lng', 'ลองจิจูด', 'n'), F('served', 'เปิดรับคำขอทางเว็บ', 'b'), F('verified', 'ตรวจสอบเบอร์แล้ว', 'b'), F('source', 'แหล่งที่มา')] },
   health: { label: 'โรงพยาบาล / สาธารณสุข', arr: () => db.contacts.health, create: true, prefix: 'H', fields: [F('name', 'ชื่อ'), F('phone', 'เบอร์โทร'), F('note', 'หมายเหตุ'), F('verified', 'ตรวจสอบแล้ว', 'b'), F('source', 'แหล่งที่มา')] },
   emergency: { label: 'เบอร์ฉุกเฉิน', arr: () => db.contacts.emergency, create: true, prefix: 'E', fields: [F('name', 'ชื่อ'), F('phone', 'เบอร์โทร'), F('note', 'หมายเหตุ'), F('verified', 'ตรวจสอบแล้ว', 'b'), F('source', 'แหล่งที่มา')] },
@@ -560,10 +564,10 @@ function coerce(f, v) {
   return clean(v, f.type === 't' ? 1000 : 200);
 }
 app.get('/api/admin/schema', staff, (req, res) => res.json({ me: pubUser(req.user), roles: ROLE_NAME, levels: LEVELS(), kinds: KINDS(), statusNames: STATUS_TEXT(), storage: store.kind,
-  colls: Object.fromEntries(Object.entries(COLLS).map(([k, c]) => [k, { label: c.label, fields: c.fields, statuses: c.statuses || [], typeField: c.typeField, create: !!c.create, triage: !!c.triage }])) }));
+  colls: Object.fromEntries(Object.entries(COLLS).map(([k, c]) => [k, { label: c.label, fields: c.fields, statuses: c.statuses || [], typeField: c.typeField, create: !!c.create, triage: !!c.triage, adminEdit: !!c.adminEdit }])) }));
 app.get('/api/admin/c/:coll', staff, (req, res) => { const C = COLLS[req.params.coll]; if (!C) return res.status(404).end(); if (!C.triage && RANK[req.user.role] < 2) return res.status(403).json({ error: 'สิทธิ์ไม่พอ' }); res.json([...C.arr()].reverse()); });
-app.post('/api/admin/c/:coll', superadmin, (req, res) => {
-  const c = req.params.coll, C = COLLS[c]; if (!C || !C.create) return res.status(404).end(); const b = req.body || {}; const r = {};
+app.post('/api/admin/c/:coll', staff, (req, res) => {
+  const c = req.params.coll, C = COLLS[c]; if (!C || !C.create) return res.status(404).end(); if (lvl(req) < RANK.superadmin && !(C.adminEdit && lvl(req) >= RANK.admin)) return NOPE(res); const b = req.body || {}; const r = {};
   for (const f of C.fields) r[f.k] = coerce(f, b[f.k]);
   if (c === 'areas') { r.id = String(r.id || '').toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'area' + (++db.seq); if (db.contacts.areas.some((a) => a.id === r.id)) return res.status(400).json({ error: 'รหัสพื้นที่ซ้ำ' }); } else r.id = newId(C.prefix);
   if (C.statuses) r.status = C.statuses[0]; r.createdAt = new Date().toISOString(); if (c === 'roads') Object.assign(r, { approval: 'approved', approvedBy: req.user.name || req.user.username, approvedAt: r.createdAt, byUser: req.user.username, points: [] });
@@ -573,7 +577,7 @@ app.post('/api/admin/c/:coll', superadmin, (req, res) => {
 app.put('/api/admin/c/:coll/:id', staff, (req, res) => {
   const c = req.params.coll, C = COLLS[c]; if (!C) return res.status(404).end(); const r = C.arr().find((x) => x.id === req.params.id); if (!r) return res.status(404).json({ error: 'ไม่พบ' });
   const b = req.body || {}, ch = [];
-  if (lvl(req) < RANK.superadmin) { // staff/admin: status (+note) only, on triage collections
+  if (lvl(req) < RANK.superadmin && !(C.adminEdit && lvl(req) >= RANK.admin)) { // staff/admin: status (+note) only, on triage collections
     if (!C.triage) return NOPE(res, 'แก้ไขข้อมูลนี้ได้เฉพาะผู้ดูแลสูงสุด');
     const changed = C.fields.filter((f) => f.k in b && !(c === 'areas' && f.k === 'id') && JSON.stringify(coerce(f, b[f.k])) !== JSON.stringify(r[f.k]));
     if (changed.length) return NOPE(res, 'แก้ได้เฉพาะสถานะ (ช่องอื่นแก้ได้เฉพาะผู้ดูแลสูงสุด): ' + changed.map((f) => f.label).join(', '));
@@ -587,7 +591,7 @@ app.put('/api/admin/c/:coll/:id', staff, (req, res) => {
   if (c === 'requests' && 'areaName' in b) { const a = db.contacts.areas.find((x) => x.name === r.areaName); if (a) r.areaId = a.id; }
   audit(req, 'update', c, r.id, ch.join(', ')); save(); afterChange(c, r); res.json({ ok: true, item: r });
 });
-app.delete('/api/admin/c/:coll/:id', superadmin, wrap(async (req, res) => { if (!COLLS[req.params.coll]) return res.status(404).end(); if (!(await removeItem(req, req.params.coll, req.params.id))) return res.status(404).json({ error: 'ไม่พบ' }); save(); afterChange(req.params.coll); res.json({ ok: true }); }));
+app.delete('/api/admin/c/:coll/:id', staff, wrap(async (req, res) => { const C = COLLS[req.params.coll]; if (!C) return res.status(404).end(); if (lvl(req) < RANK.superadmin && !(C.adminEdit && lvl(req) >= RANK.admin)) return NOPE(res, 'ลบได้เฉพาะผู้ดูแลสูงสุด'); if (!(await removeItem(req, req.params.coll, req.params.id))) return res.status(404).json({ error: 'ไม่พบ' }); save(); afterChange(req.params.coll); res.json({ ok: true }); }));
 app.post('/api/admin/c/:coll/bulk', staff, wrap(async (req, res) => {
   const c = req.params.coll, C = COLLS[c]; if (!C) return res.status(404).end(); const { ids = [], action, status } = req.body || {}; let n = 0;
   if (action === 'delete') { if (lvl(req) < RANK.superadmin) return NOPE(res, 'ลบได้เฉพาะผู้ดูแลสูงสุด'); for (const id of ids) if (await removeItem(req, c, id)) n++; }
@@ -632,7 +636,10 @@ function exportAll() {
   const count = (a, k) => a.reduce((o, r) => ((o[r[k] || '-'] = (o[r[k] || '-'] || 0) + 1), o), {});
   const summary = { generatedAt: new Date().toISOString(), totals: { reports: reports.length, requests: requests.length, roads: roads.length, lostfound: lostfound.length, missing: missing.length, contacts: contacts.length, areas: areas.length, audit: db.audit.length },
     roadsByApproval: count(roads, 'approval'), reportsByLevel: count(reports, 'level'), reportsByArea: count(reports, 'areaName'), requestsByStatus: count(requests, 'status'), requestsByKind: count(requests, 'kind'), levels: LEVELS(), statusNames: STATUS_TEXT() };
-  return { summary, reports, requests, roads, lostfound, missing, contacts, areas, audit };
+  const shelters = db.shelters.map((s) => ({ ...pick(s, ['id', 'createdAt', 'updatedAt', 'updatedBy', 'name', 'status', 'capacity', 'occupancy', 'facilities', 'contact', 'phone', 'soi', 'road', 'landmark', 'lat', 'lng', 'note']), available: Math.max(0, (s.capacity || 0) - (s.occupancy || 0)) }));
+  const safe_checkins = db.safe.map((x) => ({ ...pick(x, ['id', 'createdAt', 'updatedAt', 'name', 'areaName', 'soi', 'message', 'status', 'mod', 'modBy', 'modAt']), phone: maskPhone(x.phone) }));
+  Object.assign(summary.totals, { shelters: shelters.length, safe_checkins: safe_checkins.length });
+  return { summary, reports, requests, roads, lostfound, missing, contacts, areas, audit, shelters, safe_checkins };
 }
 app.get('/api/export/all', (req, res) => {
   if (!exportOk(req)) return res.status(401).json({ error: 'unauthorized' });
@@ -778,6 +785,86 @@ app.get('/api/route', wrap(async (req, res) => {
   const gmaps = `https://www.google.com/maps/dir/?api=1&origin=${a.join(',')}&destination=${b.join(',')}&travelmode=driving${via ? '&waypoints=' + encodeURIComponent(via) : ''}`;
   res.json({ ok: true, engine, avoids, warning: avoids ? null : (zones.length ? S('map.warnnoavoid', 'ไม่พบเส้นทางที่เลี่ยงจุดน้ำท่วมได้ทั้งหมด — เส้นทางนี้ผ่านจุดเสี่ยงน้อยที่สุด ใช้ความระมัดระวัง') : null), zonesCount: zones.length, zones, best, alternatives: order.slice(1), gmaps });
 }));
+// ================= shelters · "I'm safe" check-ins · executive dashboard · daily PDF · repeat-flood history by soi =================
+const BKK = (iso) => new Date(Date.parse(iso) + 7 * 3600e3).toISOString().slice(0, 10); // calendar day in Asia/Bangkok
+const dayStart = (d) => Date.parse(d + 'T00:00:00+07:00');
+const todayBKK = () => BKK(new Date().toISOString());
+const maskName = (n) => String(n || '').trim().split(/\s+/).map((w, i) => (i === 0 ? w : [...w][0] + '•••')).join(' ');
+// shelters (admin/superadmin manage in back-office; staff update occupancy; public sees capacity & spaces)
+const shelterPub = (s) => { const cap = s.capacity || 0, occ = s.occupancy || 0; return { id: s.id, name: s.name, lat: s.lat, lng: s.lng, soi: s.soi || '', soiEn: s.soiEn || '', road: s.road || '', roadEn: s.roadEn || '', capacity: cap, occupancy: occ, available: Math.max(0, cap - occ), facilities: s.facilities || [], phone: s.phone || '', contact: s.contact || '', note: s.note || '', status: s.status === 'open' && cap && occ >= cap ? 'full' : s.status, updatedAt: s.updatedAt || s.createdAt }; };
+const shelterPlace = (s) => { if (s.lat != null && s.lng != null) Object.assign(s, PLACE.offline(s.lat, s.lng) || { ...PLACE.EMPTY }); };
+const pubShelters = () => db.shelters.filter((s) => s.status !== 'hidden').map(shelterPub);
+app.get('/api/shelters', (req, res) => res.json(pubShelters()));
+app.patch('/api/shelters/:id/occupancy', staff, (req, res) => {
+  const s = db.shelters.find((x) => x.id === req.params.id); if (!s) return res.status(404).json({ error: 'ไม่พบ' }); const b = req.body || {};
+  const occ = num(b.occupancy); if (occ == null || occ < 0 || occ > 100000) return res.status(400).json({ error: S('err.occ', 'จำนวนผู้พักไม่ถูกต้อง') });
+  if (b.status && !['open', 'full', 'closed'].includes(b.status)) return NOPE(res);
+  s.occupancy = Math.round(occ); if (b.status) s.status = b.status; s.updatedAt = new Date().toISOString(); s.updatedBy = req.staff.n;
+  audit(req, 'shelter-occupancy', 'shelters', s.id, `${s.name}: ${s.occupancy}/${s.capacity}`); save(); afterChange('shelters', s); res.json({ ok: true, item: shelterPub(s) });
+});
+// "I'm safe": public, phone kept for staff only, name masked in search, admin moderation (hybrid: pending shows, held hidden)
+app.post('/api/safe', guard('safe'), wrap(async (req, res) => {
+  const b = req.body || {}, name = clean(b.name, 80), phone = clean(b.phone, 20);
+  if (name.length < 2) return res.status(400).json({ error: S('err.safename', 'ใส่ชื่อ-นามสกุล') }); if (last4(phone).length < 4) return res.status(400).json({ error: S('err.phone', 'กรอกเบอร์โทรที่ติดต่อได้') });
+  const a = area(b.areaId), msg = clean(b.message, 200), soi = clean(b.soi, 100);
+  const dup = db.safe.find((x) => x.name.toLowerCase() === name.toLowerCase() && last4(x.phone) === last4(phone) && x.status !== 'hidden');
+  if (dup) { Object.assign(dup, { message: msg || dup.message, soi: soi || dup.soi, areaName: a?.name || dup.areaName, updatedAt: new Date().toISOString() }); save(); broadcast('staff:update', { coll: 'safe', item: dup }, true); return res.json({ ok: true, id: dup.id, merged: true, mod: dup.mod }); }
+  const r = { id: newId('SF'), name, phone, areaId: a?.id || null, areaName: a?.name || '', soi, message: msg, status: 'open', src: { ip: req.ip || '', dev: devOf(req) }, createdAt: new Date().toISOString(), ...initialMod([name, msg, soi].join(' '), req) };
+  db.safe.push(r); if (r.mod === 'held') sysAudit('mod-held', 'safe', r.id, (r.modReasons || []).join(', '));
+  save(); broadcast('staff:update', { coll: 'safe', item: r }, true); broadcast('staff:mod', modCounts(), true); res.json({ ok: true, id: r.id, mod: r.mod, public: isPublic(r) });
+}));
+app.get('/api/safe', (req, res) => { const q = clean(req.query.q, 60).toLowerCase(); if ([...q].length < 2) return res.json([]);
+  res.json(db.safe.filter((x) => isPublic(x) && x.name.toLowerCase().includes(q)).slice(-20).reverse().map((x) => ({ id: x.id, name: maskName(x.name), areaName: x.areaName, soi: x.soi, message: x.message, verified: x.mod === 'verified', at: x.updatedAt || x.createdAt }))); });
+// repeat-flood history by soi (public reports only: not hidden, not held/rejected)
+function soiHistory(from, to) {
+  const f = from ? dayStart(from) : 0, t = to ? dayStart(to) + 864e5 : Infinity, LV = Object.keys(LEVEL_CM), m = new Map();
+  for (const r of db.reports) { const at = Date.parse(r.createdAt); if (r.status === 'hidden' || ['held', 'rejected'].includes(r.mod) || at < f || at >= t) continue; const k = r.soi || r.road; if (!k) continue;
+    let e = m.get(k); if (!e) m.set(k, (e = { soi: k, soiEn: r.soi ? r.soiEn || '' : r.roadEn || '', road: r.soi ? r.road || '' : '', count: 0, days: new Set(), maxCm: 0, maxLevel: '', first: r.createdAt, last: r.createdAt, la: 0, ln: 0, byLevel: {} }));
+    e.count++; e.days.add(BKK(r.createdAt)); e.la += r.lat; e.ln += r.lng; e.byLevel[r.level] = (e.byLevel[r.level] || 0) + 1; if ((LEVEL_CM[r.level] || 0) > e.maxCm) { e.maxCm = LEVEL_CM[r.level]; e.maxLevel = r.level; }
+    if (r.createdAt < e.first) e.first = r.createdAt; if (r.createdAt > e.last) e.last = r.createdAt; }
+  return [...m.values()].map((e) => ({ soi: e.soi, soiEn: e.soiEn, road: e.road, count: e.count, days: e.days.size, maxCm: e.maxCm, maxLevel: e.maxLevel, maxLevelText: LEVELS()[e.maxLevel] || '', first: e.first, last: e.last, lat: +(e.la / e.count).toFixed(5), lng: +(e.ln / e.count).toFixed(5), ...Object.fromEntries(LV.map((l) => ['n_' + l, e.byLevel[l] || 0])) }))
+    .sort((a, b) => b.days - a.days || b.count - a.count || b.maxCm - a.maxCm);
+}
+const csvOf = (a) => { const cols = [...new Set(a.flatMap(Object.keys))], q = (v) => { const s = v == null ? '' : Array.isArray(v) ? v.join('; ') : String(v); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }; return '\ufeff' + [cols.join(','), ...a.map((r) => cols.map((k) => q(r[k])).join(','))].join('\r\n'); };
+const ymd = (s) => (/^\d{4}-\d{2}-\d{2}$/.test(String(s || '')) ? String(s) : '');
+app.get('/api/soi-history', (req, res) => { const a = soiHistory(ymd(req.query.from), ymd(req.query.to));
+  if (req.query.format === 'csv') return res.type('text/csv; charset=utf-8').set('content-disposition', `attachment; filename="soi-history-${ymd(req.query.from) || 'all'}_${ymd(req.query.to) || todayBKK()}.csv"`).send(csvOf(a)); res.json(a); });
+// executive dashboard (read-only for every staff role)
+function execData(sinceH = 24) {
+  const now = Date.now(), since = now - sinceH * 3600e3, done = ['resolved', 'closed'];
+  const reqs = db.requests.filter((r) => r.status !== 'deleted'), open = reqs.filter((r) => !done.includes(r.status));
+  const firstAct = (r) => { const h = (r.history || []).find((x) => x.s !== 'new'); return h ? (Date.parse(h.at) - Date.parse(r.createdAt)) / 60000 : null; };
+  const resolveAt = (r) => { const h = (r.history || []).find((x) => done.includes(x.s)); return h ? (Date.parse(h.at) - Date.parse(r.createdAt)) / 60000 : null; };
+  const avg = (a) => (a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length) : null), resp = reqs.map(firstAct).filter((x) => x != null && x >= 0), resl = reqs.map(resolveAt).filter((x) => x != null && x >= 0);
+  const rep = db.reports.filter((r) => r.status !== 'hidden' && !['held', 'rejected'].includes(r.mod)), rep24 = rep.filter((r) => Date.parse(r.createdAt) > since);
+  const roads = liveRoads(), sh = db.shelters.filter((s) => s.status !== 'hidden'), teams = {};
+  for (const r of reqs) { const k = r.assignee || ''; const t = (teams[k] ||= { team: k, open: 0, enroute: 0, done: 0, total: 0 }); t.total++; if (done.includes(r.status)) t.done++; else { t.open++; if (r.status === 'enroute') t.enroute++; } }
+  const cnt = (a, f) => a.reduce((o, r) => ((o[f(r)] = (o[f(r)] || 0) + 1), o), {});
+  return { generatedAt: new Date().toISOString(), openRequests: open.length, pendingRequests: open.filter((r) => r.status === 'new').length, openByKind: cnt(open, (r) => r.kind), requestsByStatus: cnt(reqs, (r) => r.status),
+    avgResponseMin: avg(resp), avgResolveMin: avg(resl), responded: resp.length, reports24h: rep24.length, reportsByLevel24h: cnt(rep24, (r) => r.level), reportsByHour24h: Array.from({ length: 24 }, (_, i) => rep24.filter((r) => Math.floor((now - Date.parse(r.createdAt)) / 3600e3) === 23 - i).length),
+    closures: roads.filter((w) => w.type === 'closed').length, detours: roads.filter((w) => w.type !== 'closed').length,
+    shelters: { count: sh.length, open: sh.filter((s) => shelterPub(s).status === 'open').length, full: sh.filter((s) => shelterPub(s).status === 'full').length, capacity: sh.reduce((a, s) => a + (s.capacity || 0), 0), occupancy: sh.reduce((a, s) => a + (s.occupancy || 0), 0), list: sh.map(shelterPub) },
+    heat: rep.filter((r) => Date.parse(r.createdAt) > now - 7 * 864e5).map((r) => [r.lat, r.lng, LEVEL_CM[r.level] || 0]), teams: Object.values(teams).sort((a, b) => b.open - a.open), levels: LEVELS(), kinds: KINDS(), statusNames: STATUS_TEXT(),
+    safe: { total: db.safe.filter(isPublic).length } };
+}
+app.get('/api/admin/exec', staff, (req, res) => res.json(execData()));
+// daily PDF (Thai font) — download from admin, or generate on a schedule via POST with EXPORT_TOKEN (no email/LINE sending)
+const REPORT_DIR = path.join(DATA_DIR, 'reports');
+function dailyData(day) {
+  const f = dayStart(day), t = f + 864e5, inDay = (r) => { const a = Date.parse(r.createdAt); return a >= f && a < t; };
+  const rep = db.reports.filter((r) => inDay(r) && r.status !== 'hidden' && !['held', 'rejected'].includes(r.mod)), req = db.requests.filter(inDay);
+  return { day, generatedAt: new Date().toISOString(), reports: rep, requests: req, byLevel: rep.reduce((o, r) => ((o[r.level] = (o[r.level] || 0) + 1), o), {}), byHour: Array.from({ length: 24 }, (_, h) => rep.filter((r) => new Date(Date.parse(r.createdAt) + 7 * 3600e3).getUTCHours() === h).length),
+    reqByStatus: req.reduce((o, r) => ((o[r.status] = (o[r.status] || 0) + 1), o), {}), sois: soiHistory(day, day).slice(0, 12), exec: execData(), roads: liveRoads(), levels: LEVELS(), LEVEL_CM, statusNames: STATUS_TEXT(), kinds: KINDS(), boundary: POLYS, safeN: db.safe.filter((x) => inDay(x) && isPublic(x)).length };
+}
+const PDF = require('./report-pdf');
+app.get('/api/admin/report/daily.pdf', admin, wrap(async (req, res) => { const day = ymd(req.query.date) || todayBKK(); const buf = await PDF.build(dailyData(day)); audit(req, 'daily-pdf', 'reports', null, day); save();
+  res.type('application/pdf').set('content-disposition', `${req.query.dl ? 'attachment' : 'inline'}; filename="pattaya-flood-daily-${day}.pdf"`).send(buf); }));
+app.post('/api/report/daily/generate', wrap(async (req, res) => { if (!exportOk(req)) return res.status(401).json({ error: 'unauthorized' });
+  const day = ymd(req.query.date || req.body?.date) || todayBKK(), buf = await PDF.build(dailyData(day)); fs.mkdirSync(REPORT_DIR, { recursive: true }); const file = `daily-${day}.pdf`; fs.writeFileSync(path.join(REPORT_DIR, file), buf);
+  db.audit.push({ at: new Date().toISOString(), by: 'ระบบ (ตั้งเวลา)', action: 'daily-pdf', coll: 'reports', detail: file }); save(); res.json({ ok: true, file, bytes: buf.length, url: '/api/admin/reports/' + file }); }));
+app.get('/api/admin/reports', admin, (req, res) => { let a = []; try { a = fs.readdirSync(REPORT_DIR).filter((f) => /^daily-\d{4}-\d{2}-\d{2}\.pdf$/.test(f)).sort().reverse().map((f) => ({ file: f, bytes: fs.statSync(path.join(REPORT_DIR, f)).size })); } catch {} res.json(a); });
+app.get('/api/admin/reports/:file', admin, (req, res) => { const f = req.params.file; if (!/^daily-\d{4}-\d{2}-\d{2}\.pdf$/.test(f) || !fs.existsSync(path.join(REPORT_DIR, f))) return res.status(404).end(); res.type('application/pdf').sendFile(path.join(REPORT_DIR, f)); });
+
 app.get('*', renderIndex);
 app.use((err, req, res, next) => { if (err.status && err.status < 500) return res.status(err.status).json({ error: err.message }); console.error(err); res.status(500).json({ error: 'เกิดข้อผิดพลาดในระบบ' }); });
 init().then(() => app.listen(PORT, () => console.log(`Pattaya flood center on http://localhost:${PORT} · storage=${store.kind} · admin user "${ADMIN_USERNAME}"`))).catch((e) => { console.error('startup failed', e); process.exit(1); });
