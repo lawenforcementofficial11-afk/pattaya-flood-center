@@ -1,4 +1,5 @@
 // ศูนย์ช่วยเหลือน้ำท่วม เมืองพัทยา — Express + storage adapter (file / Postgres) + SSE + back-office
+const DEMO = require('./demo'); DEMO.prepEnv(); // must run before env is read (DEMO_MODE=1)
 const express = require('express');
 const fs = require('fs'), path = require('path'), crypto = require('crypto');
 const bcrypt = require('bcryptjs');
@@ -68,6 +69,7 @@ async function init() {
   db.links ||= SEED_LINKS.map((x) => ({ id: newId('K'), ...x, status: 'open', createdAt: new Date().toISOString() }));
   for (const k of ['health', 'emergency']) for (const x of db.contacts[k]) x.id ||= newId(k === 'health' ? 'H' : 'E');
   if (!db.users.length) { db.users.push({ id: newId('U'), username: ADMIN_USERNAME, name: 'ผู้ดูแลระบบ', role: 'superadmin', hash: bcrypt.hashSync(STAFF_PASSWORD, 10), active: true, pwv: 1, createdAt: new Date().toISOString() }); console.log(`bootstrapped superadmin "${ADMIN_USERNAME}" from STAFF_PASSWORD`); }
+  DEMO.seed(db, { newId, bcrypt, place: typeof PLACE !== 'undefined' ? PLACE.offline : null });
   if (db.audit.length > 5000) db.audit = db.audit.slice(-5000);
   db.geocache ||= {}; backfillPlaces(); for (const s of db.shelters) if (s.placeSrc === undefined) shelterPlace(s);
   save();
@@ -278,6 +280,7 @@ function renderIndex(req, res) {
     .replace('{{HEADERCOLOR}}', color(st.header, '#0c4a6e'));
   res.set('content-type', 'text/html; charset=utf-8').set('cache-control', 'no-cache').set('vary', 'Cookie').send(out);
 }
+DEMO.install(app, path.join(__dirname, 'public', 'admin.html'));
 app.get(['/', '/index.html'], renderIndex);
 app.get(['/admin', '/admin/'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
 app.use(express.static(path.join(__dirname, 'public'), { index: false }));
