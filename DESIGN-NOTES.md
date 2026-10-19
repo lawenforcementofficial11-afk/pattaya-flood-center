@@ -1,42 +1,69 @@
-# Design notes — original (Chachoengsao) vs new Pattaya FloodWatch layout (v3)
+# Design notes, design B: "แจ้งเตือนน้ำท่วม เมืองพัทยา / Pattaya Flood Alert / 芭提雅洪水警报"
 
-Reference inspected on 19 Oct 2026, 07:21–07:30 (UTC+7): https://chachoengsao-flood.vercel.app/chachoengsao (home, /water, /sos, /area, /map, /updates, /missing, /lost-found), mobile 390 px + desktop 1366 px.
-The colour palette and background colours of the Pattaya site were kept exactly as they were before this change (sea blue `#0b3c5d` header gradient, turquoise `#0e7490`/`#14b8a6`, sunset orange `#ea580c`/`#f59e0b`, sand `#f7f3ea`/`#efe5d0`, red `#c81e1e` for emergencies only; admin colour settings still apply). Only layout, structure, navigation, copy and icons changed.
-All functions, data, APIs, moderation, roles, geofence, admin, CMS texts, TH/EN/中文, Pattaya seal and the developer credit are unchanged.
+Branch `design-b` (local only, not pushed). Design A (`master`, commit e0fb43b, "พัทยาเฝ้าระวังน้ำ / Pattaya FloodWatch") is unchanged and keeps the original Pattaya colours.
+Reference site inspected on 19 Oct 2026, 07:21–07:30 (UTC+7): https://chachoengsao-flood.vercel.app/chachoengsao.
+Design B takes its *principles* from international public-service and emergency products: GOV.UK design patterns (plain language, one question per page, check-your-answers, summary lists, error summary, start button, inset/warning text), Japanese public warning scales (NHK / JMA-style numbered levels with one fixed colour each), the FEMA app (before / during / after preparedness), and Google SOS alerts (one summary card that answers "how bad is it, and what do I do"). No code, artwork, wording or assets were copied from any of them. Layout, copy, icons and palette are original.
 
-## What looked similar before → what it is now
+All functions are kept: citizen water reports with photo + map pin + geofence, help requests (evacuate / medical / food) with reference number and tracking, hybrid moderation (pending / verified / cleared tags, "still flooded / water gone" votes, held reports), missing-person reports, lost & found, rain forecast, HII water and rain stations, CCTV list and map, flood map with layers, hotspots, closed roads and detours, flood-avoiding routing, phone book and coordinators, staff triage page with roles, admin (/admin unchanged), CMS text keys, TH/EN/中文, Pattaya seal (`{{LOGO}}`) and the developer credit (`site.credit`).
 
-| # | Similar in the old Pattaya site (same as the original) | New Pattaya design |
+## Palette (new, design B only, WCAG 2.1 AA)
+| Role | Colour | Contrast |
 |---|---|---|
-| 1 | **Site name / H1** "ศูนย์ช่วยเหลือน้ำท่วม" (original H1 is the same) and `<title>` pattern "…\| ระดับน้ำ ขอความช่วยเหลือ" | Brand **"พัทยาเฝ้าระวังน้ำ / Pattaya FloodWatch / 芭提雅洪水监测"**, title "พัทยาเฝ้าระวังน้ำ — สถานะน้ำ แผนที่ และการช่วยเหลือในเขตเมืองพัทยา" (new keys `site.brand`, `site.title2`, `site.desc2`) |
-| 2 | **Single-column page of stacked cards**, centred, top header only | **App shell**: desktop side rail (seal, grouped nav, language switch, live status, hotline buttons) + 12-column dashboard grid; mobile compact top bar |
-| 3 | No persistent nav (original) / generic bottom nav home·report·help·map·status | Mobile **bottom tab bar**: ภาพรวม · แผนที่ · centre raised **"แจ้ง / ขอช่วย" button opening a quick-action bottom sheet** · สายด่วน · เมนู. New `#/more` full-menu page |
-| 4 | **Home order**: big "request food / relief bag" card first → coordinator → patients → "trapped? call 1669·1784" → "report water level" card → "flooding near my home?" → service list → "water situation now" → more info links → emergency numbers → staff login | **Dashboard order**: ① city **status hero** (computed level ปกติ / เฝ้าระวัง / น้ำท่วมบางพื้นที่ / วิกฤต from 24 h reports + rain forecast, wave gauge, facts, help/report buttons, hotline pills) ② **live situation mini-map** ③ **5 key-number tiles** ④ "วันนี้ต้องการทำอะไร" 3-column task groups ⑤ rain & waterways ⑥ "รอบตัวฉัน" ⑦ saved numbers ⑧ outside sources ⑨ staff link. Sections are new ids, reorderable in admin |
-| 5 | Big coloured **"Request food / relief bags" hero card** with served-district box | No food hero. Food is one row in the "ต้องการความช่วยเหลือ" group; served areas shown as a small info line |
-| 6 | **Expandable cards** "ติดต่อ อบต./ผู้ประสานงาน" and "ผู้ป่วย ติดต่อหมอ" on home | Moved to a dedicated **phone-book page `#/call`** (big 1669/1784/1337 tiles, rescue list, health list, community coordinator picker) |
-| 7 | Pink **"ติดอยู่ต้องอพยพ หรือเจ็บป่วยฉุกเฉิน โทร 1669 · 1784"** card and red emergency bar under the header | Hotlines live in the hero (pill buttons), the desktop rail footer, the quick sheet and `#/call`; no red strip under the header |
-| 8 | **"รายงานระดับน้ำ — บอกว่าน้ำสูงแค่ไหนตรงที่คุณอยู่ ใช้เวลาไม่ถึงนาที"** blue card (identical wording) | "แจ้งระดับน้ำ" button in the hero + task row "เลือกระดับน้ำ ปักหมุด แล้วส่ง"; page lead "ข้อมูลของคุณช่วยให้เพื่อนบ้านเลือกเส้นทางได้ปลอดภัยขึ้น…" |
-| 9 | **"น้ำท่วมใกล้บ้านฉันไหม?" with "ตรวจใกล้ฉัน" + "เลือกพื้นที่"** and privacy line "ตำแหน่งใช้คำนวณในเครื่องของคุณเท่านั้น ไม่ถูกส่งไปเก็บ" (identical) | Widget **"รอบตัวฉันเป็นอย่างไร"** with "ใช้ตำแหน่งของฉัน" / "เลือกชุมชน", result as a coloured status box, privacy "คำนวณบนเครื่องของคุณ ไม่มีการส่งหรือบันทึกตำแหน่ง" |
-| 10 | **Service list with chevrons** (เช็กสถานะเคส / พื้นที่ของฉัน / แผนที่ / อัปเดตล่าสุด / ตามหาคน / ของหาย / CCTV) and the same sub-lines ("ใช้เลขเคสกับเบอร์โทร 4 ตัวท้าย", "ใครรายงานอะไร ที่ไหน เรียงจากล่าสุด", "ญาติติดต่อไม่ได้…") | Three labelled task columns (ต้องการความช่วยเหลือ / ช่วยแจ้งข้อมูล / ติดตามสถานการณ์) with rewritten titles and sub-lines (e.g. "คำขอของฉันถึงไหนแล้ว", "ดูทีละพื้นที่", "รายงานล่าสุด — เรียงตามเวลา อัปเดตเอง") |
-| 11 | **"สถานการณ์น้ำตอนนี้" block**: "ฝน 24 ชม. ข้างหน้า" + label + "รวมประมาณ … · โอกาสสูงสุด …% · เริ่มราว …" + **bar chart with 07:00/13:00 ticks** | **"ฝนและน้ำในลำน้ำ" panel**: badge + three number stats ("รวมทั้งวัน", "โอกาสฝนสูงสุด", "ฝนแรกที่คาดไว้") + **SVG area chart (probability) with columns (mm)** |
-| 12 | Station rows **"ล้นตลิ่ง / ใกล้ล้นตลิ่ง / น้ำมาก"**, **"สูงกว่าตลิ่ง / ต่ำกว่าตลิ่ง … ม."**, **"วัดเมื่อ … · สสน."** | Status names "เกินขอบตลิ่ง / ใกล้ขอบตลิ่ง / น้ำค่อนข้างสูง"; "น้ำล้นขอบตลิ่งแล้ว … ม." / "เหลือระยะก่อนถึงขอบตลิ่ง … ม."; "อ่านค่า …". Pattaya (no stations) shows a resident summary with count tiles + depth mix bar |
-| 13 | **"ดูข้อมูลน้ำและอากาศเพิ่มเติม"** link list + "เปิดในแท็บใหม่ ข้อมูลเป็นของเจ้าของเว็บแต่ละแห่ง" | "แหล่งข้อมูลภายนอกที่น่าเชื่อถือ" + "ลิงก์จะเปิดหน้าต่างใหม่ ข้อมูลเป็นความรับผิดชอบของแต่ละหน่วยงาน" |
-| 14 | **"เจ้าหน้าที่และทีมกู้ภัย เข้าสู่ระบบ"** button (identical) | Small line "เจ้าหน้าที่ปฏิบัติงาน: เข้าสู่แผงงาน" + rail item "สำหรับเจ้าหน้าที่"; login page "แผงงานเจ้าหน้าที่" |
-| 15 | Footer attribution "ข้อมูลระดับน้ำ: คลังข้อมูลน้ำแห่งชาติ (สสน.) · พยากรณ์: Open-Meteo" (identical) | "แหล่งข้อมูล — ระดับน้ำและฝน: สสน. (ThaiWater) · พยากรณ์อากาศ: Open-Meteo · แผนที่ฐาน: OpenStreetMap". Developer credit `site.credit` unchanged |
-| 16 | **Report form**: numbered steps "1. … 2. … 3. …", water levels as chips with the same labels "แห้ง/ต่ำกว่าข้อเท้า <10 ซม.", "ข้อเท้า–เข่า", "เข่า–เอว", "เอว–อก", "อกขึ้นไป", "มิดหัว/ท่วมหลังคา" | Fieldset blocks with icons ("น้ำสูงประมาณไหน", "จุดที่เห็นน้ำ", "รายละเอียดเพิ่มเติม") + **depth picker cards with a mini water column per level**, sticky "ก่อนส่ง ตรวจอีกครั้ง" checklist panel. Level names rewritten: "ผิวถนนเปียก · ไม่ถึง 10 ซม.", "ท่วมข้อเท้า–ใต้เข่า · 10–50 ซม.", "ระดับเข่า–สะโพก · 50–100 ซม.", "ระดับเอว–ใต้อก · 100–130 ซม.", "ระดับอก–คอ · 130–180 ซม.", "สูงกว่าศีรษะ · เกิน 180 ซม." |
-| 17 | **Help/food form**: "1. บ้านอยู่ที่ไหน 2. ต้องการอะไรบ้าง (เลือกได้หลายข้อ) 3. น้ำสูงแค่ไหน 4. ชื่อและเบอร์โทร", need chips "ข้าวสาร/อาหาร, น้ำดื่ม, ถุงยังชีพ, ยา/เวชภัณฑ์, นม/ผ้าอ้อมเด็ก, อาหารหมา/แมว", privacy "ใช้เพื่อการช่วยเหลือเท่านั้น เห็นเฉพาะเจ้าหน้าที่", kind tabs as chips | Page header + red callout "ถ้ามีอันตรายต่อชีวิต อย่ารอกรอกแบบฟอร์ม" + **segmented kind cards** + fieldsets "ให้ทีมไปที่ไหน", "สิ่งที่ต้องการ", "ผู้ติดต่อ" + side summary card. Needs rewritten ("อาหารพร้อมทาน / ข้าวสาร", "น้ำดื่มสะอาด", "ชุดยังชีพ", "ยาประจำตัว / เวชภัณฑ์", "นมผง / ผ้าอ้อม", "อาหารสัตว์เลี้ยง", "เรือหรือรถยกสูงเพื่อออกจากพื้นที่", "มีผู้ป่วยติดเตียง / ผู้สูงอายุ"). Request kinds renamed |
-| 18 | **"← กลับหน้าหลัก"** link on every page | Breadcrumb "ภาพรวม / ชื่อหน้า" + icon page header with a one-line lead |
-| 19 | **Map page**: card with title + legend row above a 62vh map + routing form below | **Map-first**: full-height map; floating panel (desktop) / panel under the map (mobile) with tabs "สัญลักษณ์" and "เส้นทางเลี่ยงน้ำ"; A/B teardrop pins; route summary with km/min stats and collapsible steps; zoom control moved to bottom-right |
-| 20 | **Updates list** badges + "Confirmed still flooded / reported receded" vote pattern and wording ("ยืนยันว่าจริง", "ไม่พบน้ำท่วมแล้ว", "รอตรวจสอบ", "อาจไม่ท่วมแล้ว") | **Timeline feed** with depth-coloured left rule, time column, depth filter chips; vote prompt "คุณอยู่แถวนี้ไหม?" with "ยังมีน้ำอยู่ / น้ำลดแล้ว"; tags "ยังไม่ยืนยัน / ตรวจแล้ว / มีผู้แจ้งว่าน้ำลดแล้ว" |
-| 21 | **"พื้นที่ของฉัน"** list | "สถานการณ์รายพื้นที่": map + sortable community cards with a mini depth meter (deepest first), click to zoom |
-| 22 | **Lost & found** form-then-list in one card, "ตามหา / เก็บได้" | Two-column board: post cards with photo/placeholder + tag "กำลังตามหา / มีคนเก็บได้"; post form in its own panel; anti-scam line rewritten |
-| 23 | Missing-person copy "ข้อมูลส่งถึงเจ้าหน้าที่เท่านั้น ไม่ประกาศสาธารณะ" | "ตามหาคน" page with lead about shelters/rescue coordination, fieldsets "ผู้ที่ติดต่อไม่ได้" / "ผู้แจ้ง" |
-| 24 | **Icons**: Lucide-style strokes (same family as the original's icons: phone, search, map, clock, users, tag, cctv) and emoji in headings (🍚 📏 🔎 🏘️ 🕒 🐾 📹 🗺️ 👮) | **Own SVG icon set** drawn for this site (`IC` in public/app.js: dash, pin-with-wave, depth ruler, lifebuoy, medkit, rice bowl, handset, ticket-search, feed-clock, person-search, paw, wall camera, rain cloud, route, shield…); no emoji in public headings |
-| 25 | Live indicator "● สด" | Pulsing dot chip "ข้อมูลสด" / "ขาดการเชื่อมต่อ" |
+| Text | `#111a24` on white | 17.5:1 |
+| Secondary text | `#4a5361` on white | 7.8:1 |
+| Header / brand | `#101b2b` (white text) | 17.3:1 |
+| Links / primary button | `#1a56b8` (white text) | 6.9:1 |
+| Start button | `#0f7a3d` (white text) | 5.4:1 |
+| Focus | `#ffbf2f` fill + `#111a24` underline bar | 10.7:1 with text |
+| Panels / rules / form borders | `#f3f4f6` / `#b7bcc4` / `#4a5361` (3:1+ for inputs) | |
+| **Alert 1 ปกติ / Normal** | `#1b7f4b` (white text) | 5.0:1 |
+| **Alert 2 เฝ้าระวัง / Watch** | `#f5c400` (dark text) | 10.7:1 |
+| **Alert 3 เตรียมพร้อม / Get ready** | `#ef7d22` (dark text) | 6.4:1 |
+| **Alert 4 อันตราย / Danger** | `#c8321f` (white text) | 5.3:1 |
+| **Alert 5 วิกฤตสูงสุด / Extreme** | `#5e2a84` (white text) | 9.8:1 |
+The level is never shown by colour alone: it always comes with the number (1–5) and a word. The header's bottom border takes the current level colour. Admin colour pickers (primary / header / bg) do not affect design B, because it has its own fixed palette.
+
+## Original vs design A vs design B
+| # | Original (Chachoengsao) / old Pattaya copy | Design A | Design B |
+|---|---|---|---|
+| 1 | Name/H1 "ศูนย์ช่วยเหลือน้ำท่วม" | "พัทยาเฝ้าระวังน้ำ / Pattaya FloodWatch" | **"แจ้งเตือนน้ำท่วม" with city line "เมืองพัทยา" / "Pattaya Flood Alert" / "芭提雅洪水警报"**. Title: "แจ้งเตือนน้ำท่วมพัทยา: ระดับเตือนภัย สิ่งที่ต้องทำ และการขอความช่วยเหลือ" |
+| 2 | Single column of stacked cards | Side rail app shell + dashboard grid | **Public-service layout**: dark service header (seal + name, text language links, "โทรฉุกเฉิน", "เมนู" toggle), full-width alert band, then 2/3 + 1/3 reading grid (content + sticky contacts column). No side rail, no tab bar, no cards |
+| 3 | No persistent nav / bottom nav | Bottom tab bar + raised quick-action sheet | **Header "เมนู" button opens a grouped menu with a one-line description per service** (ขอความช่วยเหลือ / แจ้งข้อมูล / ติดตามสถานการณ์); footer repeats every link; Esc closes |
+| 4 | Home starts with food-request card | Status hero with a wave gauge + 4 tiers | **Numbered 5-level alert band** (ระดับ 1–5: ปกติ, เฝ้าระวัง, เตรียมพร้อม, อันตราย, วิกฤตสูงสุด) with a big level box, plain explanation, the reason (deepest report + area, heavy rain), the whole 5-step scale with the current step lifted, and an "assessed at … · not an official warning · what each level means" line. Compact one-line version on every other page |
+| 5 | Food hero card, served-area box | Food = one task row | **"สิ่งที่ควรทำตอนนี้"**: 3 numbered actions that change with the level (FEMA/NHK-style guidance), shown in a panel with a thick left bar in the level colour. Level 4–5 adds a red "ขอความช่วยเหลือตอนนี้" button |
+| 6 | Expandable coordinator/patient cards | Phone-book page with tiles | Sidebar box **"อันตรายถึงชีวิต โทรทันที"** (big numbers with labels) on every home view + phone-book page as **tables** (name / tap-to-call number) + coordinator lookup shown as a summary list |
+| 7 | Pink "call 1669 · 1784" card, red strip | Hotline pills in hero / rail / sheet | Header "โทรฉุกเฉิน" link, sidebar hotline box, and a **warning-text block (black "!" circle)** at the top of the help form |
+| 8 | Blue "รายงานระดับน้ำ…" card | Hero button + task row | One link in the task list **"แจ้งระดับน้ำในจุดที่คุณอยู่ →"**. The form is a **step-by-step wizard** |
+| 9 | "น้ำท่วมใกล้บ้านฉันไหม?" | "รอบตัวฉันเป็นอย่างไร" coloured box | **"ตรวจสอบบริเวณที่คุณอยู่"**: secondary button + labelled select; result has a heading ("มีจุดน้ำท่วมใกล้คุณ" / "ไม่พบน้ำท่วมที่น่ากังวลใกล้คุณ") |
+| 10 | Chevron service list | 3 task columns with icons | **Green start button "เริ่มขอความช่วยเหลือ →"** + a ruled list of plain text links with arrows (no icons) |
+| 11 | Rain bar chart with ticks | SVG area + column chart | **24-cell hourly rain strip** (each cell = 1 hour, shaded by mm, number inside, key below), plus a summary list (total, highest chance, start, heaviest hour) and a full hourly **table** on the weather page |
+| 12 | Station rows "ล้นตลิ่ง…" | Rewritten rows | **Data table** (สถานี / สถานะ / เทียบตลิ่ง / เวลาวัด); status words "อยู่ในเกณฑ์ปกติ / สูงกว่าปกติ / เกือบถึงตลิ่ง / ล้นตลิ่ง"; resident summary as a summary list. Station + rain data sit in accordions on the home page |
+| 13 | "ดูข้อมูลน้ำและอากาศเพิ่มเติม" | "แหล่งข้อมูลภายนอกที่น่าเชื่อถือ" | "แหล่งข้อมูลจากหน่วยงานอื่น", ruled link list with screen-reader "(เปิดในหน้าต่างใหม่)" |
+| 14 | Staff login button | Small staff line + rail item | Lock line "เจ้าหน้าที่: เข้าสู่ระบบจัดการคำขอ" + footer link "สำหรับเจ้าหน้าที่" |
+| 15 | Footer attribution | Rewritten attribution | Grey footer with a 3-column link index, new attribution sentence, credit unchanged |
+| 16 | Report form: numbered chips | Fieldsets + depth cards + checklist | **Wizard, one question per page**: ① "น้ำสูงประมาณเท่าไร" (large radio buttons, each with a small depth gauge) ② "น้ำท่วมอยู่ที่ไหน" (community select + GPS / place search / map) ③ "มีรายละเอียดอื่นหรือไม่" (optional) ④ **"ตรวจคำตอบก่อนส่ง"** summary list with "แก้ไข" links → green **confirmation panel** with the reference number and "ขั้นตอนต่อไป". Error summary box when a step is skipped. Level names: "ต่ำกว่า 10 ซม. — น้ำแค่ผิวถนน", "10–50 ซม. — ข้อเท้าถึงหน้าแข้ง", "50–100 ซม. — เข่าถึงต้นขา", "100–130 ซม. — ระดับเอว", "130–180 ซม. — ระดับอกถึงคอ", "มากกว่า 180 ซม. — ท่วมมิดศีรษะ" |
+| 17 | Help form 1-2-3-4 chips | Segmented kind cards + fieldsets | **5-step wizard**: request type (radios with hints) → where (community, map, address) → needs (large checkboxes, number of people, optional depth) → contact (name + phone validated) → check answers → confirmation panel with "ติดตามคำขอนี้". Kinds: "ออกจากพื้นที่น้ำท่วม / ผู้ป่วยหรือยา / อาหาร น้ำดื่ม และของใช้". Sidebar lists accepted areas and the privacy note |
+| 18 | "← กลับหน้าหลัก" | Breadcrumb + icon header | Text breadcrumb with chevrons ("หน้าแรก › …") + large plain H1 + lead paragraph, no icons |
+| 19 | Map card + legend + form | Map-first with floating tabbed panel | **Map / list view switch** (mobile) and **map 2/3 + accessible list 1/3** (desktop). The list shows every reported spot as a button that zooms and opens it. Legend in an accordion "คำอธิบายสัญลักษณ์"; route finder in an accordion "หาเส้นทางที่เลี่ยงน้ำท่วม" with numbered steps, result as a summary list (distance / time / engine) |
+| 20 | Badges + vote wording | Timeline feed + chips | **Record list** with depth tag, H3 area, metadata line, and a filter select in the sidebar; vote prompt "คุณเห็นจุดนี้อยู่ตอนนี้หรือไม่" with "น้ำยังท่วมอยู่ / น้ำแห้งแล้ว"; tags "รอการยืนยัน / ยืนยันแล้ว / มีรายงานว่าน้ำลดแล้ว" (outlined) |
+| 21 | "พื้นที่ของฉัน" list | Community cards with depth meters | **Table** (ชุมชน / ระดับเตือนภัย 1–5 tag / น้ำสูงสุดที่แจ้ง / รายงาน / ดูบนแผนที่), map circles coloured by alert level |
+| 22 | Lost & found card | Two-column board | **Tabs** "ประกาศทั้งหมด / ลงประกาศใหม่"; type as radios; scam warning as warning text |
+| 23 | Missing-person copy | Fieldsets "ผู้ที่ติดต่อไม่ได้ / ผู้แจ้ง" | "แจ้งคนที่ติดต่อไม่ได้": inset privacy note, fieldsets with H-level legends, confirmation panel |
+| 24 | Lucide-style icons + emoji | Own outline icon set | **Own solid pictogram set** (filled shapes, `IC` in public/app.js), used sparingly; links and headings are text-only |
+| 25 | "● สด" | Pulsing "ข้อมูลสด" chip | "ทดลองใช้" phase tag + "เชื่อมต่อข้อมูลสด" status under the header |
+| 26 | — | — | New page **#/levels** "ระดับเตือนภัยน้ำท่วม 5 ระดับ": each level with number, colour, meaning, the rule used, and actions; current level marked |
+| 27 | — | — | New home section **"เตรียมตัวรับมือน้ำท่วม"** (accordions: ก่อนน้ำมา / ระหว่างน้ำท่วม / หลังน้ำลด, original advice) |
+| 28 | Font | Noto Sans Thai, 17 px | **IBM Plex Sans Thai**, 17 px mobile / 19 px desktop, headings up to 2.8 rem, 44 px minimum touch targets |
+
+## How the alert level is computed (client side, no API change)
+Deepest live (not cleared) report in the last 24 h: chest/roof (≥155 cm) → 5, waist (≥115) → 4, knee (≥75) → 3, ankle (≥30) or heavy rain forecast (≥35 mm/24 h or any hour ≥10 mm) → 2, otherwise 1. It is labelled on the page as an automatic assessment, not an official warning.
 
 ## Text keys
-New public copy is all in CMS keys (editable in /admin → ข้อความทั้งเว็บ), groups: site, nav, tab, sheet, hot, dash, rep, aid, track, zone, feed, find, lost, cam, wx, gmap, call, menu, mod, loc, err, msg. EN/中文 translations were written for every key; unused old keys were removed from i18n/en.json and i18n/zh.json.
-Note: if the live database already has CMS overrides saved for `level.*`, `kind.*` or `rain.st*`, those saved overrides still win over the new defaults — reset them in the editor to get the new wording. Old home-page section ids in saved settings are dropped automatically on start-up and replaced with the new dashboard sections.
+New CMS groups: ui, lvl, now, prep, steps, wl, ask, case, hood, log, trace, board, sky, eye, atlas, dial, idx, lvlp, vote (+ loc). Server defaults for level.*, kind.* and rain.st* were rewritten. EN and 中文 translations were written for every key; unused keys were removed from i18n/en.json and i18n/zh.json (607 keys each).
+If the live database has saved overrides for level.*, kind.* or rain.st*, those still win. Saved home-section settings without the B ids are reset to the B order on start-up (todo, start, summary, latest, mapteaser, rain, near, prepare, sources, staffentry; reorderable in /admin).
 
-## Screenshots (local, throwaway data, sample records tagged "ข้อมูลตัวอย่าง (sample)")
-- new-home-mobile.png (390×844 @2x, full page) · new-home-desktop.png (1366, full page) · new-map.png (1366×900, detour demo) · new-report-form.png (1366, full page) · new-help.png (390 @2x, full page)
+## Accessibility
+Skip link, landmarks, one H1 per page, breadcrumbs as nav, native radios/checkboxes (44 px), labels + hints on every field, error summary with links to fields, focus moves to the step heading in the wizard, yellow focus state with a dark bar, aria-live for results, aria-pressed for toggles, tables with captions/scope, map list alternative, reduced-motion support, AA contrast throughout.
+
+## Screenshots (local, throwaway data; the 5 sample reports are tagged "ข้อมูลตัวอย่าง (sample)")
+new-home-mobile.png · new-home-desktop.png · new-map.png (detour demo) · new-report-form.png (wizard step 1) · new-report-check.png (check answers) · new-help.png (mobile, step 1) · new-levels.png

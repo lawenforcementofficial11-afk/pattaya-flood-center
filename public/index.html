@@ -1,22 +1,17 @@
 <!doctype html><html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>{{T:site.title2|พัทยาเฝ้าระวังน้ำ — สถานะน้ำ แผนที่ และการช่วยเหลือในเขตเมืองพัทยา}}</title>
-<meta name="description" content="{{T:site.desc2|ภาพรวมสถานการณ์น้ำในเมืองพัทยาแบบสด แผนที่จุดน้ำขัง ถนนปิด เส้นทางเลี่ยง ช่องทางแจ้งเหตุและขอรับความช่วยเหลือ พร้อมสายด่วนที่ใช้ได้ทันที}}">
-<meta property="og:title" content="{{T:site.title2|พัทยาเฝ้าระวังน้ำ — สถานะน้ำ แผนที่ และการช่วยเหลือในเขตเมืองพัทยา}}"><meta property="og:description" content="{{T:site.desc2|ภาพรวมสถานการณ์น้ำในเมืองพัทยาแบบสด แผนที่จุดน้ำขัง ถนนปิด เส้นทางเลี่ยง ช่องทางแจ้งเหตุและขอรับความช่วยเหลือ พร้อมสายด่วนที่ใช้ได้ทันที}}">
-<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700;800&display=swap"><link rel="icon" href="{{FAVICON}}"><link rel="apple-touch-icon" href="/icon-180.png"><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"><link rel="stylesheet" href="/style.css"><style>{{THEME}}</style>
-<link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="{{HEADERCOLOR}}"></head>
-<body><a class="skip" href="#app">{{T:site.skip|ข้ามไปยังเนื้อหา}}</a>
-<div class="shell">
-<aside class="rail" id="rail" aria-label="{{T:site.railaria|เมนูหลัก}}">
- <div class="rail-top"><a href="#/" class="brand"><span class="logo">{{LOGO}}</span><span class="bt"><b>{{T:site.brand|พัทยาเฝ้าระวังน้ำ}}</b><small>{{T:site.tagline|เมืองพัทยา จังหวัดชลบุรี}}</small></span></a>
-  <span id="live" class="live" role="status" title="{{T:site.live2title|เชื่อมต่อข้อมูลสดอยู่}}"><i></i>{{T:site.live2|ข้อมูลสด}}</span></div>
- <nav id="rnav" class="rnav" aria-label="{{T:site.railaria|เมนูหลัก}}"></nav>
- <div id="rcall" class="rcall"></div>
-</aside>
-<div class="stage">
- <div id="banner"></div>
- <main id="app" tabindex="-1"></main>
- <footer class="foot"><p>{{T:site.src|แหล่งข้อมูล — ระดับน้ำและฝน: สสน. (ThaiWater) · พยากรณ์อากาศ: Open-Meteo · แผนที่ฐาน: OpenStreetMap}}</p><p>{{T:site.disclaim|ระบบต้นแบบเพื่อการทดลองใช้งาน ไม่ใช่ช่องทางทางการของเมืองพัทยา}}</p><p class="credit">{{T:site.credit|พัฒนาโดย จ.อ. ธงชัย ชัยสีทอง เจ้าพนักงานเทศกิจชำนาญงาน}}</p></footer>
-</div>
-</div>
-<nav id="tabbar" class="tabbar" aria-label="{{T:site.tabaria|แถบเมนูด้านล่าง}}"></nav>
+<title>{{T:ui.title|แจ้งเตือนน้ำท่วมพัทยา: ระดับเตือนภัย สิ่งที่ต้องทำ และการขอความช่วยเหลือ}}</title>
+<meta name="description" content="{{T:ui.desc|ระดับเตือนภัยน้ำท่วมของเมืองพัทยาแบบห้าระดับ คำแนะนำว่าควรทำอะไรตอนนี้ แผนที่รายงานจากประชาชน และช่องทางขอความช่วยเหลือจากเจ้าหน้าที่}}">
+<meta property="og:title" content="{{T:ui.title|แจ้งเตือนน้ำท่วมพัทยา: ระดับเตือนภัย สิ่งที่ต้องทำ และการขอความช่วยเหลือ}}"><meta property="og:description" content="{{T:ui.desc|ระดับเตือนภัยน้ำท่วมของเมืองพัทยาแบบห้าระดับ คำแนะนำว่าควรทำอะไรตอนนี้ แผนที่รายงานจากประชาชน และช่องทางขอความช่วยเหลือจากเจ้าหน้าที่}}">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap"><link rel="icon" href="{{FAVICON}}"><link rel="apple-touch-icon" href="/icon-180.png"><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"><link rel="stylesheet" href="/style.css">
+<link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#101b2b"></head>
+<body><a class="skip" href="#app">{{T:ui.skip|ไปที่เนื้อหาหลัก}}</a>
+<header class="hd" role="banner"><div class="wrap hd-in">
+ <a href="#/" class="wm" aria-label="{{T:ui.home|หน้าแรก}}"><span class="logo">{{LOGO}}</span><span class="wm-t"><span class="wm-city">{{T:ui.city|เมืองพัทยา}}</span><b>{{T:ui.name|แจ้งเตือนน้ำท่วม}}</b></span></a>
+ <div class="hd-tools"><span id="langs"></span><a class="hd-call" href="#/call">{{T:ui.callbtn|โทรฉุกเฉิน}}</a><button type="button" class="hd-menu" id="menuBtn" aria-expanded="false" aria-controls="menu">{{T:ui.menu|เมนู}}</button></div>
+</div><nav id="menu" class="menu" hidden aria-label="{{T:ui.menu|เมนู}}"></nav></header>
+<div id="alertbar" aria-live="polite"></div>
+<div class="wrap"><p class="phase"><strong class="tagx">{{T:ui.phase|ทดลองใช้}}</strong><span>{{T:ui.phase.d|ระบบต้นแบบที่จัดทำเพื่อทดลองใช้งาน ยังไม่ใช่ช่องทางทางการของเมืองพัทยา}}</span><span id="live" class="live" role="status"><i></i>{{T:ui.live|เชื่อมต่อข้อมูลสด}}</span></p></div>
+<div id="banner"></div>
+<main id="app" class="wrap" tabindex="-1"></main>
+<footer class="ft" role="contentinfo"><div class="wrap"><div id="ftlinks" class="ftlinks"></div><p>{{T:ui.src|ที่มาของข้อมูล: ระดับน้ำและปริมาณฝนจากคลังข้อมูลน้ำแห่งชาติ (สสน.) · พยากรณ์อากาศจาก Open-Meteo · แผนที่ฐานจาก OpenStreetMap}}</p><p class="credit">{{T:site.credit|พัฒนาโดย จ.อ. ธงชัย ชัยสีทอง เจ้าพนักงานเทศกิจชำนาญงาน}}</p></div></footer>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script src="/app.js"></script></body></html>
