@@ -44,7 +44,7 @@ async function init() {
   if (store.kind === 'postgres' && !db.contacts && fs.existsSync(path.join(DATA_DIR, 'db.json'))) { try { db = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'db.json'), 'utf8')); console.log('imported data/db.json into Postgres'); } catch {} }
   const seed = require('./seed-contacts');
   db.contacts ||= JSON.parse(JSON.stringify(seed));
-  for (const k of ['reports', 'requests', 'missing', 'lostfound', 'audit', 'roads', 'users', 'shelters', 'safe']) db[k] ||= [];
+  for (const k of ['reports', 'requests', 'missing', 'lostfound', 'audit', 'roads', 'users', 'shelters', 'safe', 'points']) db[k] ||= [];
   for (const w of db.roads) if (!w.approval) { w.approval = 'approved'; w.approvedBy ||= 'migration'; w.approvedAt ||= w.createdAt; } // road approval workflow: pre-existing roads stay live
   db.seq ||= 1000; db.texts ||= {}; db.i18n ||= {}; for (const l of ['en', 'zh']) db.i18n[l] ||= {};
   db.geofence = { ...GEO_DEFAULT, ...(db.geofence || {}) };
@@ -53,7 +53,7 @@ async function init() {
   db.antispam = { ...JSON.parse(JSON.stringify(AS_DEFAULT)), ...(db.antispam || {}) }; db.antispam.limits = { ...AS_DEFAULT.limits, ...db.antispam.limits };
   // remove seeded demo / test data unless DEMO_SEED=1
   if (!DEMO_SEED) { const isDemo = (x) => /ทดสอบ|ข้อมูลตัวอย่าง/.test(JSON.stringify(x)); let n = 0;
-    for (const k of ['reports', 'requests', 'missing', 'lostfound', 'roads', 'shelters', 'safe']) { const before = db[k].length; db[k] = db[k].filter((x) => !isDemo(x)); n += before - db[k].length; }
+    for (const k of ['reports', 'requests', 'missing', 'lostfound', 'roads', 'shelters', 'safe', 'points']) { const before = db[k].length; db[k] = db[k].filter((x) => !isDemo(x)); n += before - db[k].length; }
     if (n) console.log(`removed ${n} demo/test records (set DEMO_SEED=1 to keep/seed demo data)`); }
   else if (!db.reports.length) { const now = new Date().toISOString();
     db.reports.push({ id: newId('R'), areaId: 'central', areaName: 'พัทยากลาง', level: 'knee', lat: 12.9355, lng: 100.889, note: 'ข้อมูลตัวอย่าง', photo: null, status: 'new', confirms: 1, createdAt: now });
@@ -74,7 +74,7 @@ async function init() {
   for (const k of ['health', 'emergency']) for (const x of db.contacts[k]) x.id ||= newId(k === 'health' ? 'H' : 'E');
   if (!db.users.length) { db.users.push({ id: newId('U'), username: ADMIN_USERNAME, name: 'ผู้ดูแลระบบ', role: 'superadmin', hash: bcrypt.hashSync(STAFF_PASSWORD, 10), active: true, pwv: 1, createdAt: new Date().toISOString() }); console.log(`bootstrapped superadmin "${ADMIN_USERNAME}" from STAFF_PASSWORD`); }
   if (db.audit.length > 5000) db.audit = db.audit.slice(-5000);
-  db.geocache ||= {}; backfillPlaces(); for (const s of db.shelters) if (s.placeSrc === undefined) shelterPlace(s);
+  db.geocache ||= {}; backfillPlaces(); for (const s of db.shelters) if (s.placeSrc === undefined) shelterPlace(s); for (const p of db.points) if (p.placeSrc === undefined) shelterPlace(p);
   save();
 }
 let saveT, saving = Promise.resolve();
@@ -492,6 +492,7 @@ function afterChange(c, item) {
   if (c === 'requests' && item) broadcast('request', publicRequest(item)); if (c === 'reports' && item) broadcast('report', publicReport(item));
   if (c === 'roads') { broadcast('roads', liveRoads()); broadcast('staff:roadq', { total: pendingRoads() }, true); } if (['areas', 'health', 'emergency'].includes(c)) broadcast('contacts', db.contacts);
   if (c === 'shelters') { if (item) { shelterPlace(item); item.updatedAt = new Date().toISOString(); } broadcast('shelters', pubShelters()); }
+  if (c === 'points') { if (item) { shelterPlace(item); item.updatedAt = new Date().toISOString(); } broadcast('points', pubPoints()); }
   if (['cctv', 'links'].includes(c)) broadcast('cms', { coll: c }); if (c === 'lostfound') broadcast('lostfound', {});
 }
 function setStatus(req, c, r, status, note) {
@@ -553,6 +554,7 @@ const COLLS = {
   lostfound: { label: 'ของหาย–ได้คืน', arr: () => db.lostfound, triage: true, typeField: 'type', statuses: ['open', 'closed', 'hidden'], fields: [F('type', 'ประเภท', 'select', { options: ['lost', 'found'] }), F('category', 'หมวด'), F('title', 'หัวข้อ'), F('detail', 'รายละเอียด', 't'), F('place', 'สถานที่'), F('phone', 'เบอร์')] },
   roads: { label: 'เส้นทางเลี่ยง / ถนนปิด', arr: () => db.roads, triage: true, typeField: 'type', statuses: ['open', 'hidden'], fields: [F('type', 'ประเภท', 'select', { options: ['detour', 'closed'] }), F('title', 'ชื่อ'), F('soi', 'ซอย (จุดกึ่งกลาง)'), F('road', 'ถนน'), F('along', 'ถนน/ซอยที่ผ่าน'), F('landmark', 'จุดสังเกตใกล้เคียง'), F('note', 'หมายเหตุ', 't')] },
   shelters: { label: 'ศูนย์พักพิง', arr: () => db.shelters, create: true, adminEdit: true, prefix: 'S', statuses: ['open', 'full', 'closed', 'hidden'], fields: [F('name', 'ชื่อศูนย์พักพิง'), F('capacity', 'รับได้ (คน)', 'n'), F('occupancy', 'ผู้พักตอนนี้ (คน)', 'n'), F('facilities', 'สิ่งอำนวยความสะดวก (คั่นด้วย ,)', 'list'), F('contact', 'ผู้ติดต่อ'), F('phone', 'เบอร์โทร'), F('lat', 'ละติจูด', 'n'), F('lng', 'ลองจิจูด', 'n'), F('note', 'หมายเหตุ', 't')] },
+  points: { label: 'จุดเจ้าหน้าที่ (ประชาชนส่งอาหาร/น้ำดื่ม)', arr: () => db.points, create: true, adminEdit: true, prefix: 'P', statuses: ['open', 'closed', 'hidden'], fields: [F('name', 'ชื่อจุด'), F('staff', 'เจ้าหน้าที่ประจำจุด (คน)', 'n'), F('needs', 'สิ่งที่ต้องการตอนนี้ (ข้อความสั้น)'), F('phone', 'เบอร์โทรประจำจุด'), F('hours', 'เวลาที่รับของ'), F('lat', 'ละติจูด', 'n'), F('lng', 'ลองจิจูด', 'n'), F('note', 'หมายเหตุ', 't')] },
   safe: { label: 'ฉันปลอดภัย (เช็กอิน)', arr: () => db.safe, adminEdit: true, statuses: ['open', 'hidden'], fields: [F('name', 'ชื่อ'), F('areaName', 'พื้นที่'), F('soi', 'ซอย'), F('phone', 'เบอร์โทร (ไม่แสดงต่อสาธารณะ)'), F('message', 'ข้อความ', 't')] },
   areas: { label: 'พื้นที่ / ผู้ประสานงาน (พื้นที่ที่ให้บริการ)', arr: () => db.contacts.areas, create: true, fields: [F('id', 'รหัสพื้นที่ (a-z)'), F('name', 'ชื่อพื้นที่'), F('org', 'หน่วยงาน'), F('coordinator', 'ผู้ประสานงาน'), F('phone', 'เบอร์โทร'), F('lat', 'ละติจูด', 'n'), F('lng', 'ลองจิจูด', 'n'), F('served', 'เปิดรับคำขอทางเว็บ', 'b'), F('verified', 'ตรวจสอบเบอร์แล้ว', 'b'), F('source', 'แหล่งที่มา')] },
   health: { label: 'โรงพยาบาล / สาธารณสุข', arr: () => db.contacts.health, create: true, prefix: 'H', fields: [F('name', 'ชื่อ'), F('phone', 'เบอร์โทร'), F('note', 'หมายเหตุ'), F('verified', 'ตรวจสอบแล้ว', 'b'), F('source', 'แหล่งที่มา')] },
@@ -577,6 +579,7 @@ app.post('/api/admin/c/:coll', staff, (req, res) => {
   if (c === 'areas') { r.id = String(r.id || '').toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'area' + (++db.seq); if (db.contacts.areas.some((a) => a.id === r.id)) return res.status(400).json({ error: 'รหัสพื้นที่ซ้ำ' }); } else r.id = newId(C.prefix);
   if (C.statuses) r.status = C.statuses[0]; r.createdAt = new Date().toISOString(); if (c === 'roads') Object.assign(r, { approval: 'approved', approvedBy: req.user.name || req.user.username, approvedAt: r.createdAt, byUser: req.user.username, points: [] });
   if (!r.name && !r.title) return res.status(400).json({ error: 'กรอกชื่อ' });
+  if (c === 'points' && r.lat != null && !inPattaya(r.lat, r.lng)) return res.status(400).json({ error: outsideErr(r.lat, r.lng).message });
   C.arr().push(r); audit(req, 'create', c, r.id, r.name || r.title); save(); afterChange(c, r); res.json({ ok: true, item: r });
 });
 app.put('/api/admin/c/:coll/:id', staff, (req, res) => {
@@ -588,6 +591,7 @@ app.put('/api/admin/c/:coll/:id', staff, (req, res) => {
     if (changed.length) return NOPE(res, 'แก้ได้เฉพาะสถานะ (ช่องอื่นแก้ได้เฉพาะผู้ดูแลสูงสุด): ' + changed.map((f) => f.label).join(', '));
     if (b.status && b.status !== r.status && !statusOk(req, b.status)) return NOPE(res, 'ซ่อนรายการได้เฉพาะผู้ดูแล');
   }
+  if (c === 'points' && ('lat' in b || 'lng' in b)) { const la = 'lat' in b ? num(b.lat) : r.lat, ln = 'lng' in b ? num(b.lng) : r.lng; if (la != null && !inPattaya(la, ln)) return res.status(400).json({ error: outsideErr(la, ln).message }); }
   const ll0 = [r.lat, r.lng], soi0 = r.soi;
   for (const f of C.fields) if (f.k in b && !(c === 'areas' && f.k === 'id')) { const v = coerce(f, b[f.k]); if (JSON.stringify(v) !== JSON.stringify(r[f.k])) { r[f.k] = v; ch.push(f.label); } }
   if (b.status && b.status !== r.status && setStatus(req, c, r, b.status, b.stnote ?? (C.fields.some((f) => f.k === 'note') ? '' : b.note))) ch.push('สถานะ=' + b.status);
@@ -836,6 +840,20 @@ app.patch('/api/shelters/:id/occupancy', staff, (req, res) => {
   if (b.status && !['open', 'full', 'closed'].includes(b.status)) return NOPE(res);
   s.occupancy = Math.round(occ); if (b.status) s.status = b.status; s.updatedAt = new Date().toISOString(); s.updatedBy = req.staff.n;
   audit(req, 'shelter-occupancy', 'shelters', s.id, `${s.name}: ${s.occupancy}/${s.capacity}`); save(); afterChange('shelters', s); res.json({ ok: true, item: shelterPub(s) });
+});
+// staff duty points: citizens bring food / drinking water to the staff on duty (no money, no staff names in public output)
+const pointPub = (p) => ({ id: p.id, name: p.name, lat: p.lat, lng: p.lng, soi: p.soi || '', soiEn: p.soiEn || '', road: p.road || '', roadEn: p.roadEn || '', landmark: p.landmark || '', landmarkEn: p.landmarkEn || '', landmarkM: p.landmarkM ?? null,
+  staff: p.staff || 0, needs: p.needs || '', phone: p.phone || '', hours: p.hours || '', note: p.note || '', status: p.status === 'closed' ? 'closed' : 'open', updatedAt: p.updatedAt || p.createdAt });
+const pubPoints = () => db.points.filter((p) => p.status !== 'hidden' && p.lat != null && inPattaya(p.lat, p.lng)).map(pointPub);
+app.get('/api/points', (req, res) => res.set('cache-control', 'no-store').json(pubPoints()));
+app.get('/api/staff/points', staff, (req, res) => res.json(db.points.filter((p) => p.status !== 'hidden' || lvl(req) >= RANK.admin).map((p) => ({ ...pointPub(p), status: p.status, updatedBy: p.updatedBy || '' }))));
+// quick update from /#/staff (staff+): staff count, needs text, open/closed
+app.patch('/api/points/:id/quick', staff, (req, res) => {
+  const p = db.points.find((x) => x.id === req.params.id); if (!p || (p.status === 'hidden' && lvl(req) < RANK.admin)) return res.status(404).json({ error: 'ไม่พบ' }); const b = req.body || {}, ch = [];
+  if ('staff' in b) { const n = num(b.staff); if (n == null || n < 0 || n > 1000) return res.status(400).json({ error: S('pts.err.staff', 'จำนวนเจ้าหน้าที่ไม่ถูกต้อง') }); if (Math.round(n) !== p.staff) { ch.push(`เจ้าหน้าที่ ${p.staff ?? 0}→${Math.round(n)}`); p.staff = Math.round(n); } }
+  if ('needs' in b) { const v = clean(b.needs, 200); if (v !== (p.needs || '')) { p.needs = v; ch.push('ต้องการ=' + (v || '-')); } }
+  if ('status' in b) { if (!['open', 'closed'].includes(b.status)) return NOPE(res); if (b.status !== p.status) { ch.push(`สถานะ ${p.status}→${b.status}`); p.status = b.status; } }
+  p.updatedBy = req.staff.n; audit(req, 'point-quick', 'points', p.id, `${p.name}: ${ch.join(', ') || 'ยืนยันข้อมูลล่าสุด'}`); save(); afterChange('points', p); res.json({ ok: true, item: pointPub(p) });
 });
 // "I'm safe": public, phone kept for staff only, name masked in search, admin moderation (hybrid: pending shows, held hidden)
 app.post('/api/safe', guard('safe'), wrap(async (req, res) => {

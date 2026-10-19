@@ -121,3 +121,10 @@ Off by default; records marked ทดสอบ / ข้อมูลตัวอ�
 ## Supervisors' Google Sheet (full-data export)
 - `GET /api/export/all` — every dataset as JSON (`?dataset=reports&format=csv` for one CSV). Auth: `EXPORT_TOKEN` env (≥24 chars) via `x-export-token` header or `?token=`, or an admin/superadmin session. Citizens' phones are masked to the last 4 digits; IPs, device ids, vote fingerprints and photos are never included.
 - Sheet sync: `scripts/google-sheet-sync.gs` (Apps Script bound to the sheet, hourly trigger). Set script properties `EXPORT_URL` + `EXPORT_TOKEN`, run `installHourlyTrigger()` once.
+
+## จุดบริการ & รับบริจาค (`/#/points`)
+หน้าแยกพร้อมแผนที่ของตัวเอง แสดงจุดที่เจ้าหน้าที่ประจำอยู่ เพื่อให้ประชาชนส่งน้ำดื่ม/อาหารให้เจ้าหน้าที่ได้: ชื่อจุด, ซอย/ถนน/จุดสังเกต (อัตโนมัติจากพิกัด), จำนวนเจ้าหน้าที่ + เวลาอัปเดต, ข้อความ "ต้องการ", ปุ่มโทร, ลิงก์นำทาง Google Maps และหมายเหตุว่าไม่รับเงิน (ไม่มีชื่อเจ้าหน้าที่ในข้อมูลสาธารณะ ไม่แสดงบนแผนที่หน้าหลัก)
+- เจ้าหน้าที่ขึ้นไป: แก้ด่วนที่ `/#/staff` → แท็บ "จุดเจ้าหน้าที่" (−/+ จำนวนคน, สิ่งที่ต้องการ, เปิด/ปิด) → `PATCH /api/points/:id/quick` ลงบันทึก `point-quick`
+- ผู้ดูแลขึ้นไป: เพิ่ม/แก้/ซ่อน/ลบจุดที่ `/admin#c/points` (รับเฉพาะพิกัดในเขตเมืองพัทยาฝั่งแผ่นดินใหญ่)
+- ข้อมูลเก็บใน key `points` (pfc_kv / data/db.json), SSE event `points`
+- smoke test: `BASE=http://localhost:5811 node scripts/points-smoke.js` (เฉพาะเครื่อง local)
