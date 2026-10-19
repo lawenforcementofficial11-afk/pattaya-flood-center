@@ -18,9 +18,16 @@ function install(app, adminHtmlPath) {
   app.use((req, res, next) => { const send = res.send.bind(res); res.send = (b) => send(typeof b === 'string' && b.trimStart().startsWith('<') ? inject(b) : b); next(); });
   app.get(['/admin', '/admin/', '/admin.html'], (req, res) => res.type('html').set('cache-control', 'no-store').send(fs.readFileSync(adminHtmlPath, 'utf8')));
 }
+const NOTE0 = 'ข้อมูลตัวอย่าง (DEMO)';
 function seed(db, { newId, bcrypt, place }) {
   if (!ON) return;
   for (const [username, role, pw] of ACCOUNTS) if (!db.users.some((u) => u.username === username)) db.users.push({ id: newId('U'), username, name: 'Demo ' + role, role, hash: bcrypt.hashSync(pw, 10), active: true, pwv: 1, createdAt: new Date().toISOString() });
+  // staff duty points (จุดบริการ & รับบริจาค) — seeded separately so an existing demo DB gets them too. Mainland Pattaya only.
+  if (Array.isArray(db.points) && !db.points.length) { const t = Date.now(), iso2 = (ms) => new Date(ms).toISOString(), P2 = (la, ln) => { const p = place ? place(la, ln) || {} : {}; return { soi: p.soi || '', soiEn: p.soiEn || '', road: p.road || '', roadEn: p.roadEn || '', landmark: p.landmark || '', landmarkEn: p.landmarkEn || '', landmarkM: p.landmarkM ?? null, placeSrc: p.placeSrc || 'osm' }; };
+    [['จุดเจ้าหน้าที่ แยกพัทยาใต้–สาย 2 (ตัวอย่าง)', 12.9268, 100.8812, 8, 'น้ำดื่ม, ข้าวกล่อง', '0381000101', '07:00–21:00', 'open', 25], ['จุดเจ้าหน้าที่ ถนนเฉลิมพระเกียรติ (ตัวอย่าง)', 12.9290, 100.8902, 5, 'น้ำดื่ม, ขนมปัง', '0381000102', '08:00–20:00', 'open', 50],
+     ['จุดเจ้าหน้าที่ ถนนเพนียดช้าง (ตัวอย่าง)', 12.9352, 100.8990, 6, 'ข้าวกล่อง 30 กล่อง', '0381000103', 'ตลอด 24 ชม.', 'open', 15], ['จุดเจ้าหน้าที่ นาเกลือ (ตัวอย่าง)', 12.9575, 100.8975, 4, 'น้ำดื่ม', '0381000104', '08:00–18:00', 'open', 95],
+     ['จุดเจ้าหน้าที่ จอมเทียนสาย 2 (ตัวอย่าง)', 12.8930, 100.8770, 0, '', '0381000105', '08:00–18:00', 'closed', 180]]
+      .forEach(([name, lat, lng, staff, needs, phone, hours, status, minAgo]) => db.points.push({ id: newId('P'), name, lat, lng, staff, needs, phone, hours, note: NOTE0, status, createdAt: iso2(t - 6 * 3600e3), updatedAt: iso2(t - minAgo * 60e3), updatedBy: 'demo-staff', ...P2(lat, lng) })); }
   if (db.demoSeeded) return; db.demoSeeded = true;
   const now = Date.now(), P = (la, ln) => (place ? place(la, ln) || {} : {}), iso = (ms) => new Date(ms).toISOString(), NOTE = 'ข้อมูลตัวอย่าง (DEMO)';
   const spots = [[12.9236, 100.8828, 6, 'พัทยาใต้'], [12.926, 100.879, 5, 'พัทยาใต้'], [12.9355, 100.889, 4, 'พัทยากลาง'], [12.9306, 100.8965, 3, 'พัทยากลาง'], [12.8885, 100.873, 3, 'จอมเทียน'], [12.957, 100.897, 2, 'นาเกลือ'], [12.9175, 100.8905, 2, 'พัทยาใต้'], [12.944, 100.893, 1, 'พัทยาเหนือ']];
